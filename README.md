@@ -5,7 +5,9 @@ The hosted service stores searchable summaries separately from compressed event
 batches. This repository contains the SDKs and their versioned wire contract.
 
 The browser SDK is released to npm as `@codepress/interactions-browser` by
-[the publish workflow](.github/workflows/publish-browser.yml). The Python
+[its publish workflow](.github/workflows/publish-browser.yml), and the Playwright
+helpers as `@codepress/interactions-playwright` by
+[theirs](.github/workflows/publish-playwright.yml). The Python
 package is not yet published to PyPI, and the hosted service is not publicly available.
 
 ## Browser
@@ -39,6 +41,19 @@ await interactions.runAction("transfer.confirm", async ({ fetch }) => {
 The bound fetch propagates the interaction UUID only to configured API origins.
 Ordinary unrelated requests stay unlinked. There is no time-window/last-click guess.
 See [browser behavior and limits](packages/browser/README.md).
+
+The SDK also runs UI checks (overlaps, spills, clipped text, dead and rage clicks,
+stuck busy states and more) and sends what they find as `ui.finding` events with
+measured evidence. The same checks run in Node and in tests:
+
+```ts
+import { expectNoFindings } from "@codepress/interactions-playwright";
+
+await expectNoFindings(page);
+```
+
+See [UI checks](packages/browser/README.md#ui-checks) and the
+[Playwright helpers](packages/playwright/README.md).
 
 ## Django and Celery
 
@@ -84,7 +99,8 @@ pnpm test
 pnpm typecheck
 pnpm build
 pnpm --filter @codepress/interactions-browser exec playwright install chromium
-pnpm test:browser   # real-browser tests (Chromium)
+pnpm build          # the Playwright helpers test against the browser package's build
+pnpm test:browser   # real-browser tests (Chromium), browser package and Playwright helpers
 cd python
 uv sync
 uv run pytest

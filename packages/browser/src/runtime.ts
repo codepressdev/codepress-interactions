@@ -1,4 +1,8 @@
 import { ClickEffects } from "./click-effects";
+import { checkEvents, checkSnapshot } from "./detect/index";
+import type { TimelineEvent } from "./detect/timeline";
+import { toFindingData, type Finding } from "./detect/types";
+import type { SnapshotBody } from "./format";
 import { PerfSignals } from "./perf";
 import {
   callSink,
@@ -9,6 +13,7 @@ import {
 } from "./sink";
 import {
   CHECK_EVERY,
+  INTERACTIVE,
   encodeSnapshot,
   walkSnapshot,
   type SnapshotSummary,
@@ -46,6 +51,19 @@ const ATTRIBUTION = "explicit synchronous runAction only" as const;
 const CONTROLS = "button,a,form,input[type=submit],[role=button]";
 const MAX_SENT_HASHES = 1000;
 const MAX_PENDING_SNAPSHOTS = 4;
+/** Fingerprints remembered per page session; past this the oldest may be sent again. */
+const MAX_FINDINGS = 2000;
+/** Events kept for the click and stability checks. */
+const MAX_TIMELINE = 500;
+/** What a click counts as having hit, for grouping rage clicks. */
+const TARGETS = `${INTERACTIVE},label`;
+/**
+ * HTML interactive content: a click on one of these inside a <label> is not
+ * forwarded to the label's field. Focusable spans and ARIA roles still are.
+ */
+const LABEL_INTERACTIVE =
+  "a[href],button,input:not([type=hidden]),select,textarea,label,details,embed,iframe,img[usemap],audio[controls],video[controls]";
+const TIMELINE_TYPES = new Set(["interaction.started", "ui.click.settled", "ui.state.changed", "perf.summary", "ui.snapshot"]);
 
 type EventData = EvidenceEvent["data"];
 interface PendingSnapshot extends SinkSnapshot {
@@ -108,6 +126,14 @@ export class Runtime {
   private snapshotStats = { taken: 0, uploaded: 0, deduplicated: 0, skipped: 0 };
   private lastSnapshot: SnapshotSummary | null = null;
   private walks = 0;
+  // Findings
+  private findingsEnabled: boolean;
+  private sentFindings = new Set<string>();
+  private timeline: TimelineEvent[] = [];
+  private timelineScheduled = false;
+  /** Per page session: the clicked element's opaque key, so rage clicks group by element. */
+  private targetKeys = new WeakMap<Element, number>();
+  private nextTargetKey = 1;
 
   constructor(
     private options: InteractionOptions,
@@ -140,6 +166,7 @@ export class Runtime {
       options.snapshots !== false &&
       typeof crypto !== "undefined" &&
       typeof crypto.subtle?.digest === "function";
+    this.findingsEnabled = options.findings !== false;
   }
 
   lease(): InteractionHandle {
@@ -229,7 +256,7 @@ export class Runtime {
         this.dropped++;
         return;
       }
-      this.queue.push({
+      const event: EvidenceEvent = {
         event_id: crypto.randomUUID(),
         schema_version: 2,
         interaction_id: id,
@@ -241,7 +268,13 @@ export class Runtime {
         type,
         attribution: attribution ?? (id ? "explicit" : "unknown"),
         data,
-      });
+      };
+      this.queue.push(event);
+      if (this.findingsEnabled && TIMELINE_TYPES.has(type)) {
+        this.timeline.push(event as TimelineEvent);
+        if (this.timeline.length > MAX_TIMELINE) this.timeline.splice(0, this.timeline.length - MAX_TIMELINE);
+        if (type === "ui.click.settled" || type === "perf.summary") this.scheduleTimelineChecks();
+      }
     } catch {
       this.dropped++;
     }
@@ -293,9 +326,42 @@ export class Runtime {
     this.clicks.start();
     this.removals.push(() => this.clicks?.stop());
 
+    // A click on a <label> makes the browser click its field in the same task.
+    // The label click is recorded as a click on the field's control, and that
+    // second click is skipped: one user click, one start, on the control it
+    // operates. Any real input (a pointer or key press) ends the window, so a
+    // user's next click always counts.
+    let labelControl: Element | null = null;
+    const endLabelWindow = () => {
+      labelControl = null;
+    };
+    for (const type of ["pointerdown", "keydown"]) {
+      document.addEventListener(type, endLabelWindow, { capture: true, passive: true });
+      this.removals.push(() => document.removeEventListener(type, endLabelWindow, { capture: true }));
+    }
     const control = (event: Event) => {
-      const target =
-        event.target instanceof Element ? event.target.closest(CONTROLS) : null;
+      const clicked = event.target instanceof Element ? event.target : null;
+      let forwarded: Element | null = null;
+      let label: Element | null = null;
+      if (event.type === "click" && clicked) {
+        if (labelControl && clicked === labelControl) {
+          labelControl = null;
+          return;
+        }
+        label = clicked.closest("label");
+        forwarded = (label as HTMLLabelElement | null)?.control ?? null;
+        // The browser forwards nothing for a click on the field itself, on other
+        // interactive content inside the label (a link), or to a disabled field.
+        const inner = clicked.closest(LABEL_INTERACTIVE);
+        if (
+          forwarded &&
+          (forwarded.contains(clicked) ||
+            (inner && inner !== label && label!.contains(inner)) ||
+            forwarded.matches(":disabled"))
+        )
+          forwarded = null;
+      }
+      const target = (forwarded ? forwarded.closest(CONTROLS) : null) ?? (clicked ? clicked.closest(CONTROLS) : null);
       if (
         !target ||
         !this.root.contains(target) ||
@@ -318,8 +384,19 @@ export class Runtime {
       this.record("interaction.started", id, {
         action: event.type,
         control_id: controlId,
+        ...(event.type === "click" && clicked
+          ? { target_key: this.targetKey(target, forwarded && label ? label : clicked) }
+          : {}),
       });
-      if (event.type === "click") this.clicks?.begin(id, controlId, target);
+      if (event.type === "click") this.clicks?.begin(id, controlId, target, event);
+      if (forwarded && forwarded.closest(CONTROLS) === target) {
+        // Skip the click the browser is about to forward to the field.
+        const field = forwarded;
+        labelControl = field;
+        setTimeout(() => {
+          if (labelControl === field) labelControl = null;
+        }, 0);
+      }
     };
     listen(document, "click", control);
     listen(document, "submit", control);
@@ -329,9 +406,12 @@ export class Runtime {
     };
     listen(window, "popstate", navigation);
     listen(window, "hashchange", () => this.onRoute());
-    listen(window, "pagehide", () => {
+    listen(window, "pagehide", (event) => {
       this.clicks?.pageHidden();
       this.recordPerf();
+      // A page kept in the back-forward cache comes back: its findings still
+      // wait for a viewport. Only a page that is really going away sends them as they are.
+      if (!(event as PageTransitionEvent).persisted) this.runTimelineChecks(true);
       void this.flush(true);
     });
     listen(document, "visibilitychange", () => {
@@ -362,6 +442,7 @@ export class Runtime {
       });
     }
     this.patchXHR();
+    this.patchWindowOpen();
     this.timer = setInterval(
       () => {
         void this.flush();
@@ -607,6 +688,107 @@ export class Runtime {
     );
   }
 
+  /** Counts window.open during a click as opening a new tab (no DOM change is the expected effect). */
+  private patchWindowOpen(): void {
+    const original = window.open;
+    if (typeof original !== "function") return;
+    const runtime = this;
+    const wrapped = function (this: Window, ...args: Parameters<Window["open"]>) {
+      try {
+        runtime.clicks?.newContext();
+      } catch {
+        /* Opening the window must remain unaffected. */
+      }
+      return original.apply(this, args);
+    } as Window["open"];
+    window.open = wrapped;
+    this.removals.push(() => {
+      if (window.open === wrapped) window.open = original;
+    });
+  }
+
+  /**
+   * An opaque per-session number for what was clicked: the nearest control or
+   * label at or above the click inside the tracked control, else the clicked
+   * element. Never sent as structure; only equal or not.
+   */
+  private targetKey(control: Element, clicked: Element): number {
+    let element = clicked.closest(TARGETS);
+    // A label outside its field's control keys as the label itself.
+    if (!element || !(control.contains(element) || element === clicked)) element = clicked;
+    let key = this.targetKeys.get(element);
+    if (key === undefined) {
+      // Keys only need to differ within a rage window, so wrapping is harmless.
+      if (this.nextTargetKey > 1000000) this.nextTargetKey = 1;
+      key = this.nextTargetKey++;
+      this.targetKeys.set(element, key);
+    }
+    return key;
+  }
+
+  // ---- Findings --------------------------------------------------------
+
+  /**
+   * Sends each new fingerprint once per page session. With `defer`, a finding
+   * whose place has no viewport yet (it happened before the first snapshot) is
+   * held back: a later run, once a snapshot has filled in its viewport, sends it
+   * with the right width band and fingerprint.
+   */
+  private emitFindings(findings: Finding[], defer = false): void {
+    for (const finding of findings) {
+      if (!this.active) return;
+      if (defer && !(finding.viewport_width > 0)) continue;
+      if (this.sentFindings.has(finding.fingerprint)) continue;
+      if (this.sentFindings.size >= MAX_FINDINGS)
+        this.sentFindings.delete(this.sentFindings.values().next().value!);
+      this.sentFindings.add(finding.fingerprint);
+      this.record(
+        "ui.finding",
+        finding.interaction_id,
+        toFindingData(finding),
+        finding.interaction_id ? "inferred" : "unknown",
+      );
+    }
+  }
+
+  /**
+   * `final` (the page is going away for good) sends findings that still have no
+   * viewport rather than lose them; so does a session without snapshots, which
+   * never gets one.
+   */
+  private runTimelineChecks(final = false): void {
+    if (!this.findingsEnabled || !this.active || !this.timeline.length) return;
+    try {
+      this.emitFindings(
+        checkEvents(this.timeline, { ...this.options.detect, now: Date.now() }),
+        !final && this.snapshotsEnabled,
+      );
+    } catch {
+      /* A check failing must never affect capture. */
+    }
+  }
+
+  private scheduleTimelineChecks(): void {
+    if (this.timelineScheduled) return;
+    this.timelineScheduled = true;
+    void idle().then(() => {
+      this.timelineScheduled = false;
+      this.runTimelineChecks();
+    });
+  }
+
+  private runSnapshotChecks(body: SnapshotBody, sha256: string): void {
+    if (!this.findingsEnabled) return;
+    void idle().then(() => {
+      if (!this.active) return;
+      try {
+        this.emitFindings(checkSnapshot(body, { ...this.options.detect, sha256 }));
+      } catch {
+        /* A check failing must never affect capture. */
+      }
+    });
+  }
+
   private patchXHR(): void {
     const prototype = XMLHttpRequest.prototype;
     const originalOpen = prototype.open;
@@ -727,6 +909,7 @@ export class Runtime {
       ignoreSelector: validSelector(this.options.ignoreSelector),
       routeTemplate,
       shouldAbort: () => !this.active || document.visibilityState === "hidden",
+      theme: typeof this.options.theme === "function" ? this.options.theme : undefined,
     });
     if (!result || !this.active) {
       this.snapshotStats.skipped++;
@@ -754,6 +937,7 @@ export class Runtime {
       walk_ms: clampMs(result.walkMs),
       slices: result.slices,
       max_slice_ms: clampMs(result.maxSliceMs),
+      theme: body.viewport.theme ?? "unknown",
     };
     const summary: SnapshotSummary = {
       ...data,
@@ -772,6 +956,7 @@ export class Runtime {
     }
     this.sentHashes.add(sha256);
     this.record("ui.snapshot", null, data);
+    this.runSnapshotChecks(body, sha256);
     // The first screen also reports which performance signals this browser has.
     if (!this.reportedSignals) this.recordPerf(true);
     if (this.snapshotQueue.length >= MAX_PENDING_SNAPSHOTS) {
@@ -857,6 +1042,7 @@ export class Runtime {
     if (!this.active) return Promise.resolve();
     if (this.sending) return this.sending;
     this.recordPerf();
+    this.runTimelineChecks();
     this.sending = this.send(keepalive)
       .catch(() => {
         this.lastError = "transport_error";
@@ -948,6 +1134,7 @@ export class Runtime {
     this.queue = [];
     this.pending = null;
     this.snapshotQueue = [];
+    this.timeline = [];
     this.stopController.abort();
     clearInterval(this.timer);
     this.observer?.disconnect();
@@ -967,6 +1154,12 @@ let onStop: ((runtime: Runtime) => void) | undefined;
 export const setStopHook = (hook: (runtime: Runtime) => void): void => {
   onStop = hook;
 };
+
+const idle = (): Promise<void> =>
+  new Promise((resolve) => {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(() => resolve(), { timeout: 1000 });
+    else setTimeout(resolve, 0);
+  });
 
 function validSelector(selector: string | undefined): string {
   if (!selector) return "";

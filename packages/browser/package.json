@@ -1,7 +1,7 @@
 {
   "name": "@codepress/interactions-browser",
-  "version": "0.2.0",
-  "description": "Privacy-first browser interaction evidence SDK: screen snapshots, click follow-through and pluggable sinks",
+  "version": "0.3.0",
+  "description": "Privacy-first browser interaction evidence SDK: screen snapshots, click follow-through, UI checks and pluggable sinks",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -17,6 +17,26 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./detect": {
+      "import": {
+        "types": "./dist/detect.d.ts",
+        "default": "./dist/detect.js"
+      },
+      "require": {
+        "types": "./dist/detect.d.cts",
+        "default": "./dist/detect.cjs"
+      }
+    },
+    "./page-script": {
+      "import": {
+        "types": "./dist/page-script.d.ts",
+        "default": "./dist/page-script.js"
+      },
+      "require": {
+        "types": "./dist/page-script.d.cts",
+        "default": "./dist/page-script.cjs"
+      }
     }
   },
   "files": [
@@ -24,7 +44,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "build": "tsup && node scripts/build-page-script.mjs",
     "test": "vitest run",
     "test:browser": "playwright test",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
@@ -32,7 +52,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/quantfive/codepress-interactions.git",
+    "url": "git+https://github.com/quantfive/codepress-interactions.git",
     "directory": "packages/browser"
   },
   "publishConfig": {
@@ -44,6 +64,17 @@
     "layout",
     "snapshot",
     "interaction",
-    "observability"
-  ]
+    "observability",
+    "layout-checks"
+  ],
+  "typesVersions": {
+    "*": {
+      "detect": [
+        "./dist/detect.d.ts"
+      ],
+      "page-script": [
+        "./dist/page-script.d.ts"
+      ]
+    }
+  }
 }

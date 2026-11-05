@@ -1,3 +1,5 @@
+import type { DetectOptions, FindingData } from "./detect/types";
+import type { Theme } from "./format";
 import type { InteractionSink } from "./sink";
 import type { SnapshotSummary } from "./snapshot";
 
@@ -63,6 +65,16 @@ export interface InteractionOptions {
   visibleSettleMs?: number;
   /** Subtrees recorded as one box flagged `ignored`, never descended. Always includes `[data-layout-ignore]` and `[data-interactions-exclude]`. */
   ignoreSelector?: string;
+  /** Run the checks in idle time and send `ui.finding` events, once per fingerprint per page session. Default true. */
+  findings?: boolean;
+  /** Check thresholds (see `@codepress/interactions-browser/detect`). */
+  detect?: Omit<DetectOptions, "now">;
+  /**
+   * The theme actually showing, for apps with their own theme toggle; read at
+   * every snapshot. Anything other than "light", "dark" or "unknown" (or a throw)
+   * is recorded as "unknown". Default: the user's `prefers-color-scheme`.
+   */
+  theme?: () => Theme;
 }
 
 export interface Diagnostics {
@@ -133,6 +145,8 @@ export type LegacyData = Partial<{
   trace_id: string;
   route_template: string;
   request_label: string;
+  /** Click starts: opaque per-session key of the element clicked (0.3.0). */
+  target_key: number;
 }>;
 
 export type SnapshotTrigger = "route" | "click" | "resize" | "visible" | "manual";
@@ -150,6 +164,8 @@ export interface SnapshotEventData {
   walk_ms: number;
   slices: number;
   max_slice_ms: number;
+  /** Color scheme on screen, as in the body's `viewport.theme`. Absent before 0.3.0. */
+  theme?: Theme;
 }
 
 export type ClickEndReason =
@@ -173,6 +189,14 @@ export interface ClickSettledData {
   route_changed: boolean;
   dialog_opened: boolean;
   focus_moved: boolean;
+  /** The click landed on a control (button, link, field, label, summary, control role or tabindex), not only inside a container. */
+  target_interactive?: boolean;
+  /** An input or change event fired on the clicked field (checkbox, radio, select…). */
+  value_changed?: boolean;
+  /** The click put focus in a text field, select or editable region: the caret or picker is the effect. */
+  field_focused?: boolean;
+  /** The click opened a new tab or window (link target, modifier key, download or window.open). */
+  new_context?: boolean;
   overlapped: boolean;
   incomplete: boolean;
   end_reason: ClickEndReason;
@@ -204,7 +228,7 @@ export interface EvidenceEvent {
   occurred_at: string;
   type: EventType;
   attribution: "explicit" | "inferred" | "unknown";
-  data: LegacyData | SnapshotEventData | ClickSettledData | PerfSummaryData;
+  data: LegacyData | SnapshotEventData | ClickSettledData | PerfSummaryData | FindingData;
 }
 
 export interface Batch {

@@ -7,7 +7,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { events, init, openPage, output, rowOf, validateBatch, validateSnapshot } from "./harness";
+import { events, openPage, output, validateBatch, validateSnapshot } from "./harness";
 
 const protocol = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../protocol");
 
@@ -51,6 +51,8 @@ test("regenerate golden fixtures", async ({ page }) => {
     });
   });
   await page.evaluate(() => (window as any).handle.snapshot());
+  // Snapshot checks run in idle time after the snapshot.
+  await expect.poll(async () => events(await output(page)).some((e) => e.type === "ui.finding")).toBe(true);
   await page.click("#save");
   await expect.poll(async () => events(await output(page)).some((e) => e.type === "ui.click.settled")).toBe(true);
   const out = await output(page);
@@ -71,52 +73,12 @@ test("regenerate golden fixtures", async ({ page }) => {
       ["interaction.started", "request.started", "request.completed", "ui.click.settled", "perf.summary"].includes(e.type) ||
       (e.type === "ui.snapshot" && e.data.sha256 === golden.sha256),
   );
-  const subject = rowOf(body, "checkout.pay");
-  const other = rowOf(body, "promo.banner");
-  const ref = (row: number) => ({
-    index: row,
-    tag: body.dictionaries.tag[body.elements.tag[row]],
-    role: body.elements.role[row] === -1 ? null : body.dictionaries.role[body.elements.role[row]],
-    test_id: body.dictionaries.test_id[body.elements.test_id[row]],
-    x: body.elements.x[row],
-    y: body.elements.y[row],
-    width: body.elements.width[row],
-    height: body.elements.height[row],
-    position: body.legend.position[body.elements.position[row]],
-    z_index: body.elements.z_index[row],
-  });
-  const hit = body.hit_tests.element.indexOf(subject);
-  const finding = {
-    event_id: "",
-    schema_version: 2,
-    interaction_id: null,
-    operation_id: null,
-    source: "browser",
-    source_instance_id: picked[0].source_instance_id,
-    sequence: 0,
-    occurred_at: "",
-    type: "ui.finding",
-    attribution: "inferred",
-    data: {
-      check: "hit.blocked",
-      check_version: 1,
-      fingerprint: "9c1185a5c5e9fc54",
-      route_template: body.route_template,
-      snapshot_sha256: golden.sha256,
-      viewport_width: body.viewport.width,
-      viewport_height: body.viewport.height,
-      subject: ref(subject),
-      other: ref(other),
-      evidence: {
-        blocked_points: body.hit_tests.blocked[hit],
-        tested_points: body.hit_tests.tested[hit],
-        overlap_px: 2560,
-        overlap_ratio: 0.5,
-        text_overlap_px: 0,
-        same_stacking_context: true,
-      },
-    },
-  };
+  // A real finding from the SDK's own checks: the banner over the pay button.
+  const finding = events(out).find(
+    (e) => e.type === "ui.finding" && e.data.check === "layout.overlap" && e.data.snapshot_sha256 === golden.sha256,
+  );
+  expect(finding?.data.subject.test_id).toBe("checkout.pay");
+  expect(finding?.data.other.test_id).toBe("promo.banner");
   const all = [...picked, finding].map((event, index) => ({
     ...event,
     event_id: uuid(index + 1),

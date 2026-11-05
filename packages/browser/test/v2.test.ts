@@ -135,7 +135,7 @@ describe("options", () => {
     const good = start({ release: "app@2.4.0+sha.1a2b" });
     good.handle.runAction("x", () => {});
     await good.handle.flush();
-    expect(good.sink.batches[0]).toMatchObject({ schema_version: 2, sdk_version: "0.2.0", release: "app@2.4.0+sha.1a2b" });
+    expect(good.sink.batches[0]).toMatchObject({ schema_version: 2, sdk_version: "0.3.0", release: "app@2.4.0+sha.1a2b" });
     good.handle.shutdown();
     const bad = start({ release: "has spaces and <html>" });
     bad.handle.runAction("x", () => {});
@@ -162,11 +162,30 @@ describe("options", () => {
   });
 });
 
+let compiledSnapshot: ReturnType<typeof ajv.compile> | undefined;
+const snapshotValidator = () =>
+  (compiledSnapshot ??= ajv.compile(
+    JSON.parse(readFileSync(resolve(protocol, "v2-snapshot.schema.json"), "utf8")),
+  ));
+
 describe("contract", () => {
+  it("bodies and batches written by 0.2.0 still validate", () => {
+    const validateSnapshot = snapshotValidator();
+    const fixtures = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures");
+    // Saved verbatim from the 0.2.0 release's golden fixtures.
+    const body = JSON.parse(readFileSync(resolve(fixtures, "v2-snapshot-0.2.0.json"), "utf8"));
+    const batch = JSON.parse(readFileSync(resolve(fixtures, "v2-batch-0.2.0.json"), "utf8"));
+    expect(body.legend.flags.aria_hidden).toBeUndefined();
+    expect(validateSnapshot(body), JSON.stringify(validateSnapshot.errors)).toBe(true);
+    expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    // The original ten flags are still required, and values are still fixed.
+    const { visible: _visible, ...missing } = body.legend.flags;
+    expect(validateSnapshot({ ...body, legend: { ...body.legend, flags: missing } })).toBe(false);
+    expect(validateSnapshot({ ...body, legend: { ...body.legend, flags: { ...body.legend.flags, aria_hidden: 1 } } })).toBe(false);
+  });
+
   it("golden fixtures validate, and the snapshot fixture hashes to its event's sha256", async () => {
-    const validateSnapshot = ajv.compile(
-      JSON.parse(readFileSync(resolve(protocol, "v2-snapshot.schema.json"), "utf8")),
-    );
+    const validateSnapshot = snapshotValidator();
     const batch = JSON.parse(readFileSync(resolve(protocol, "v2-batch.json"), "utf8"));
     const body = JSON.parse(readFileSync(resolve(protocol, "v2-snapshot.json"), "utf8"));
     expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);

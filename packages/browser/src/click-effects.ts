@@ -4,6 +4,7 @@
  * observed in the window are counted, never attached to the click as explicit.
  */
 import type { PerfSignals, SignalCounters } from "./perf";
+import { INTERACTIVE } from "./snapshot";
 import type { ClickEndReason, ClickSettledData } from "./types";
 import { clampMs, now } from "./util";
 
@@ -11,6 +12,11 @@ const DIALOGS = 'dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="
 /** Elements inspected for a dialog per mutation callback, across all added subtrees. */
 const DIALOG_SCAN_BUDGET = 256;
 const MAX_COUNT = 1_000_000;
+/** Text entry and pickers: focusing one is the click's visible effect (a caret or a picker). */
+const FIELD =
+  'input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]):not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),textarea,select,[contenteditable=""],[contenteditable="true"]';
+/** Inputs after the click itself: what they cause belongs to them, not to the click. */
+const USER_INPUT = ["pointerdown", "mousedown", "touchstart", "keydown"] as const;
 
 export interface ClickHost {
   root: Element;
@@ -44,6 +50,15 @@ interface ClickWindow {
   dialogOpened: boolean;
   focusMoved: boolean;
   overlapped: boolean;
+  /** The clicked element (or its nearest ancestor) is a control, not just a container. */
+  target: Element | null;
+  /** The form field a click on a label activates. */
+  labelled: Element | null;
+  valueChanged: boolean;
+  fieldFocused: boolean;
+  newContext: boolean;
+  /** A later pointer or key input happened while this click was open. */
+  laterInput: boolean;
   quiet?: ReturnType<typeof setTimeout>;
   hard?: ReturnType<typeof setTimeout>;
 }
@@ -100,11 +115,35 @@ export class ClickEffects {
     });
     const onFocus = (event: Event) => {
       const click = this.current;
-      if (!click || !(event.target instanceof Node)) return;
+      // Focus after a later click or key press is that input's doing (F1).
+      if (!click || click.laterInput || !(event.target instanceof Node)) return;
+      if (isField(event.target) && this.ownField(click, event.target)) {
+        click.fieldFocused = true;
+        return;
+      }
       if (event.target === click.control || click.control.contains(event.target)) return;
       click.focusMoved = true;
       this.effect(click, true);
     };
+    const onValue = (event: Event) => {
+      const click = this.current;
+      if (!click || click.laterInput || !(event.target instanceof Node)) return;
+      if (!this.ownField(click, event.target)) return;
+      click.valueChanged = true;
+      this.effect(click, true);
+    };
+    const onInput = () => {
+      const click = this.current;
+      if (click) click.laterInput = true;
+    };
+    for (const type of USER_INPUT) {
+      document.addEventListener(type, onInput, { capture: true, passive: true });
+      this.removals.push(() => document.removeEventListener(type, onInput, { capture: true }));
+    }
+    for (const type of ["input", "change"]) {
+      document.addEventListener(type, onValue, true);
+      this.removals.push(() => document.removeEventListener(type, onValue, true));
+    }
     const onToggle = (event: Event) => {
       const click = this.current;
       if (!click) return;
@@ -131,7 +170,7 @@ export class ClickEffects {
   }
 
   /** Starts following a click. A click still open is closed as overlapped. */
-  begin(id: string, controlId: string, control: Element): void {
+  begin(id: string, controlId: string, control: Element, event?: Event): void {
     if (!this.active) return;
     const previous = this.current;
     if (previous) this.finish(previous, "overlapped");
@@ -156,7 +195,18 @@ export class ClickEffects {
       dialogOpened: false,
       focusMoved: false,
       overlapped: !!previous,
+      target: null,
+      labelled: null,
+      valueChanged: false,
+      fieldFocused: false,
+      newContext: false,
+      laterInput: false,
     };
+    try {
+      describeTarget(click, event, this.host.root);
+    } catch {
+      /* Unknown target: reported as not interactive. */
+    }
     this.current = click;
     // Observed only while a click is open: idle pages pay nothing.
     this.observer?.observe(this.host.root, OBSERVE);
@@ -181,6 +231,12 @@ export class ClickEffects {
       if (failed) click.failed++;
       this.effect(click, false);
     };
+  }
+
+  /** A new tab or window was opened (window.open) while a click was open. */
+  newContext(): void {
+    const click = this.current;
+    if (click && !click.laterInput) click.newContext = true;
   }
 
   routeChanged(): void {
@@ -209,6 +265,17 @@ export class ClickEffects {
     this.observer?.disconnect();
     for (const remove of this.removals) remove();
     this.removals = [];
+  }
+
+  /** Is `node` the clicked field, inside the clicked control, or the field its label activates? */
+  private ownField(click: ClickWindow, node: Node): boolean {
+    return (
+      node === click.target ||
+      node === click.labelled ||
+      node === click.control ||
+      click.control.contains(node) ||
+      (!!click.target && click.target.contains(node))
+    );
   }
 
   /** Looks for a dialog in an added subtree, visiting at most `budget` elements. */
@@ -264,6 +331,10 @@ export class ClickEffects {
       route_changed: click.routeChanged,
       dialog_opened: click.dialogOpened,
       focus_moved: click.focusMoved,
+      target_interactive: !!click.target,
+      value_changed: click.valueChanged,
+      field_focused: click.fieldFocused,
+      new_context: click.newContext,
       overlapped: click.overlapped || reason === "overlapped",
       incomplete: reason === "timeout" || reason === "page_hidden",
       end_reason: reason,
@@ -290,4 +361,30 @@ export class ClickEffects {
       .catch(() => null)
       .then(report, flush);
   }
+}
+
+const isField = (node: Node): node is Element => node instanceof Element && node.matches(FIELD);
+
+/** Records what was clicked: the nearest control, a label's field, and browser-handled effects. */
+function describeTarget(click: ClickWindow, event: Event | undefined, root: Element): void {
+  const origin = event?.target instanceof Element ? event.target : click.control;
+  const target = origin.closest(`${INTERACTIVE},label`);
+  if (!target || !root.contains(target)) return;
+  if ((target as HTMLButtonElement).disabled || target.closest("fieldset:disabled")) return;
+  click.target = target;
+  if (target instanceof HTMLLabelElement) click.labelled = target.control;
+  const field = isField(target) ? target : click.labelled && isField(click.labelled) ? click.labelled : null;
+  // The press focused the field before the click event: its caret or picker is the effect.
+  if (field && document.activeElement === field) click.fieldFocused = true;
+  const link = target.closest("a[href]");
+  const mouse = event as MouseEvent | undefined;
+  if (
+    link &&
+    (!["", "_self", "_parent", "_top"].includes((link.getAttribute("target") ?? "").toLowerCase()) ||
+      link.hasAttribute("download") ||
+      mouse?.metaKey ||
+      mouse?.ctrlKey ||
+      mouse?.shiftKey)
+  )
+    click.newContext = true;
 }

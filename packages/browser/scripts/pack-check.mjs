@@ -14,6 +14,14 @@ const required = [
   "dist/index.cjs",
   "dist/index.d.ts",
   "dist/index.d.cts",
+  "dist/detect.js",
+  "dist/detect.cjs",
+  "dist/detect.d.ts",
+  "dist/detect.d.cts",
+  "dist/page-script.js",
+  "dist/page-script.cjs",
+  "dist/page-script.d.ts",
+  "dist/page-script.d.cts",
 ];
 const missing = required.filter((file) => !files.includes(file));
 const unexpected = files.filter(

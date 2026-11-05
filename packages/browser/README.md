@@ -54,15 +54,67 @@ Events and snapshots carry a route template, never the URL. By default every pat
 
 ## Screen snapshots
 
-Each settled screen is recorded as element boxes in a columnar body ([schema](../../protocol/v2-snapshot.schema.json), [example](../../protocol/v2-snapshot.json)): parent, tag, role, safe test ID, `x`/`y`/`width`/`height` (viewport CSS pixels from `getBoundingClientRect`), z-index, CSS position, flags (visible, interactive, clipped, scrollable, overlay, ignored, pointer-events none, opaque, clips content, in shadow root) and text length. For elements with direct text it also records the box of the rendered text itself (from a `Range`, geometry only), so an element box can overlap something while its text does not. For visible interactive elements it probes `elementFromPoint` at the center and four inset points and stores how many land on something else and which element is on top. `elementFromPoint` is never called for other elements. No text, values, attribute values (other than role and safe test IDs), URLs or HTML are recorded.
+Each settled screen is recorded as element boxes in a columnar body ([schema](../../protocol/v2-snapshot.schema.json), [example](../../protocol/v2-snapshot.json)): parent, tag, role, safe test ID, `x`/`y`/`width`/`height` (viewport CSS pixels from `getBoundingClientRect`), z-index, CSS position, flags (visible, interactive, clipped, scrollable, overlay, ignored, pointer-events none, opaque, clips content, in shadow root, open popover, ellipsis or line clamp, broken image, `aria-hidden` on the element or an ancestor) and text length. "In shadow root" means the element's own tree is a shadow root; slotted light-DOM content is not flagged. The viewport records whether the primary pointer is coarse (touch) and the theme on screen (`light`, `dark` or `unknown`): the `theme()` option when given, else `prefers-color-scheme`. The `ui.snapshot` event carries the same `theme`, so screens can be grouped by route, viewport and theme without reading bodies. For elements with direct text it also records the box of the rendered text itself (from a `Range`, geometry only), so an element box can overlap something while its text does not. For visible interactive elements it probes `elementFromPoint` at the center and four inset points and stores how many land on something else and which element is on top. `elementFromPoint` is never called for other elements. No text, values, attribute values (other than role and safe test IDs), URLs or HTML are recorded.
 
 Snapshots are taken when a route settles (including the first screen), after a click settles, after a resize settles and when the tab becomes visible again, never while it is hidden. `handle.snapshot()` takes one on demand. Each body is hashed (SHA-256 of the exact uncompressed bytes); a hash already sent in this page session is not sent again. With `endpoint`, the body is uploaded by `HEAD` then, only on 404, a gzip `PUT` to `/v2/snapshots/{sha256}`. The service must allow `HEAD`/`PUT` and the `Authorization` and `Content-Encoding` headers from your origin.
 
-The walk runs in slices of idle time: the clock is checked every 8 elements and the walk yields once `maxSliceMs` has passed, so a slice overruns by at most one batch of 8. It stops at `maxElements` and marks the body `truncated`; a body larger than `maxSnapshotBytes` drops trailing rows and is also `truncated`. If the DOM, scroll position or viewport changes between slices the body is marked `torn`. Open shadow roots are traversed (slotted content under its slot); closed roots are one box. Canvas, iframes, embeds and video are one box flagged `opaque`. `display: none` subtrees are skipped. Subtrees matching `ignoreSelector`, `[data-layout-ignore]` or `[data-interactions-exclude]` are recorded as one box flagged `ignored` and never descended, so checks can skip them. Clip detection follows `overflow` and `contain: paint`; it does not model every case (for example absolutely positioned descendants escaping a non-positioned clipping ancestor).
+The walk runs in slices of idle time: the clock is checked every 8 elements and the walk yields once `maxSliceMs` has passed, so a slice overruns by at most one batch of 8. It stops at `maxElements` and marks the body `truncated`; a body larger than `maxSnapshotBytes` drops trailing rows and is also `truncated`. If the DOM, scroll position or viewport changes between slices the body is marked `torn`. Open shadow roots are traversed (slotted content under its slot); closed roots are one box. Canvas, iframes, embeds and video are one box flagged `opaque`. `display: none` subtrees are skipped. Content the browser does not render (the body of a closed `<details>`, `content-visibility: hidden`) is recorded without the visible flag. Subtrees matching `ignoreSelector`, `[data-layout-ignore]` or `[data-interactions-exclude]` are recorded as one box flagged `ignored` and never descended, so checks can skip them. Clip detection follows `overflow` and `contain: paint`; it does not model every case (for example absolutely positioned descendants escaping a non-positioned clipping ancestor).
 
 ## Click follow-through
 
-Every click on a control starts a follow-through window. It ends when the page has been quiet (no DOM change, no observed request in flight) for `clickSettleMs`, and is reported as one `ui.click.settled` event: time to first visible feedback (DOM change, route change, dialog or focus move), settle time, counts of mutations, requests, failed requests, uncaught errors and long tasks, layout shift score, whether the route changed, a dialog opened or focus moved, and the screen hashes before and after. Its `interaction_id` is the click's `interaction.started` ID and its attribution is always `inferred`; requests observed in the window are counted there and never attached to the click as explicit. A second click before the first settles closes the first as `overlapped` (both are flagged) and nothing is counted for both. A click still open after `clickTimeoutMs`, or when the page is hidden or unloaded, is reported `incomplete`.
+Every click on a control starts a follow-through window. It ends when the page has been quiet (no DOM change, no observed request in flight) for `clickSettleMs`, and is reported as one `ui.click.settled` event: time to first visible feedback (DOM change, route change, dialog or focus move), settle time, counts of mutations, requests, failed requests, uncaught errors and long tasks, layout shift score, whether the route changed, a dialog opened or focus moved, and the screen hashes before and after. Since 0.3.0 it also says whether the click landed on a control (`target_interactive`), changed a field's value (`value_changed`, for example a checkbox), put focus in a text field (`field_focused`) or opened a new tab or window (`new_context`). Focus or feedback caused by a later pointer or key input is not credited to an earlier open click. Its `interaction_id` is the click's `interaction.started` ID and its attribution is always `inferred`; requests observed in the window are counted there and never attached to the click as explicit. A second click before the first settles closes the first as `overlapped` (both are flagged) and nothing is counted for both. A click still open after `clickTimeoutMs`, or when the page is hidden or unloaded, is reported `incomplete`. Since 0.3.0 a click's `interaction.started` also carries `target_key`, an opaque per-session number for the element clicked (only equality means anything), and a click on a `<label>` is recorded once, as a click on its field's control (for example a `<button role="checkbox">` with a `<label for>`), not again when the browser forwards it to the field. Labels for disabled fields and links inside labels are clicks of their own.
+
+## UI checks
+
+`@codepress/interactions-browser/detect` turns snapshots and events into findings. The checks are pure functions over data: no `document`, no `window`, the same results in the browser, in Node and in a test runner ([Playwright helpers](../playwright/README.md)). By default the SDK runs them in idle time after each new snapshot, after each settled click and at each flush, and sends each finding as a `ui.finding` event once per fingerprint per page session (`findings: false` turns this off). A click finding from before the first snapshot has no viewport yet, so it waits for the snapshot that gives it one (and with it the right width band and fingerprint); it is sent as it is only when the page is going away or the session takes no snapshots.
+
+A finding is a pointer, not a verdict: it names the elements and carries `evidence`, measured facts only (numbers, booleans, or `null` for unknown). Whether it is a bug is for whoever reads it; checks do not filter by confidence.
+
+| Check (`check`) | Reports |
+| --- | --- |
+| `layout.overlap` | Two elements whose visible boxes intersect by more than `overlapMinPx` in both directions, where neither contains the other. Subject is the element underneath. Evidence: overlap size, fraction of each covered, blocked hit-test points of controls underneath, whether the subject's rendered text is covered (`null` for opaque boxes), CSS positions, depth to the shared parent, overlay flags. |
+| `layout.spill` | An element crossing its nearest `overflow: hidden/clip` ancestor by more than `tolerancePx`. Only the outermost spilling element is reported. |
+| `layout.page_h_scroll` | The document is wider than the viewport; subject is the element reaching furthest right. |
+| `layout.offscreen_control` | A control outside the area the page can scroll to (or, if fixed, outside the viewport). |
+| `layout.small_tap_target` | A control smaller than `minTapTargetPx` in either direction, only for touch input. |
+| `layout.clipped_text` | Rendered text cut off by a clipping box, unless it ends in an ellipsis or line clamp. |
+| `click.dead_click` | A settled click on a control with no feedback, request, route change, dialog, focus move, value change, field focus or new tab. |
+| `click.rage_click` | `rageClickCount` clicks on the same element of one control within `rageClickWindowMs`, while some click went unanswered. Different fields of one form are not one burst, and a label click (which the browser forwards to its field) is one click. A burst where every settled click had feedback (a stepper, a toggle) is not rage; one still settling is decided on a later run. Evidence: `click_count`, `span_ms`, `clicks_settled`, `clicks_with_feedback` (`null` with no click follow-through). |
+| `click.slow_feedback` | First feedback after `slowFeedbackMs`, or none while requests ran that long. |
+| `click.silent_failure` | A request failed during the click and the screen did not change. |
+| `click.error_after_click` | An uncaught error during the click. |
+| `stability.stuck_busy` | A busy or progress indicator still showing after `stuckBusyMs`. |
+| `stability.layout_shift` | A performance window's layout shift score at or above `layoutShiftScore`. |
+| `stability.slow_input` | Slowest event timing at or above `slowInputMs`. |
+| `stability.broken_image` | An image that finished loading with no image data. |
+
+What is not reported as an overlap or spill: dialogs, menus, listboxes, tooltips and open popovers against what is beneath them (they are separate layers, as is a fixed full-screen backdrop); content crossing the edge of a scroller (that is scrolling); content scrolled under a sticky or fixed element (once the page has scrolled; at the page origin a fixed or sticky element covering content is reported); subtrees with `data-layout-ignore`; elements of 1×1 px or less. A `torn` snapshot gives no position-based findings; rows missing from a `truncated` one give none. Click checks use only windows that `settled`: a click whose page navigated away, timed out or was overlapped by another click gives no `dead_click`.
+
+Sorting puts blocked controls first (any `*_blocked_points` > 0), then covered or clipped text, then the rest, then decorative findings, by check, in order found. It never drops a finding. A finding is decorative when one of its elements is a decorative layer (`*_decorative`: no text, no control, and `pointer-events: none` or `aria-hidden`), or none of its elements holds text or a control (`*_has_content: false`, for example stacked or cropped images). The earlier tiers win: a decorative layer that covers text sorts with covered text. Overlap evidence also has `subject_text_covered_ratio`, the share of the subject's rendered text area that is covered.
+
+The fingerprint is 32 hex characters of SHA-256 over the check, the route template, the viewport width band and the elements' `stable_id`, never coordinates, scroll offsets or text. It is the same for the same bug at another scroll offset, in another session or on another machine. `stable_id` is the test ID or, when there is none, a structural tag path from the nearest ancestor with a test ID (`#cart/div/button`); evidence `subject_structural_id` / `structural_id` says so. Structural paths change when the markup does, and siblings with the same tags share one.
+
+```ts
+import { checkEvents, checkSnapshot, formatFinding } from "@codepress/interactions-browser/detect";
+
+const findings = [...checkSnapshot(body, { sha256 }), ...checkEvents(batch.events)];
+findings.map(formatFinding);
+```
+
+| Detect option | Default | |
+| --- | --- | --- |
+| `checks` | all | Short names to run, e.g. `["overlap", "spill"]`. |
+| `overlapMinPx` | 0.5 | Overlap must be wider and taller than this (sub-pixel rounding does not count). |
+| `tolerancePx` | 1 | Spill, offscreen, clipped text and page scroll must cross by more than this. |
+| `minTapTargetPx` | 24 | WCAG 2.2 target size minimum. |
+| `touch` | snapshot's coarse pointer | Run the tap target check. |
+| `viewportBands` | `[480, 768, 1024, 1440]` | Width breakpoints for the fingerprint band. |
+| `slowFeedbackMs` | 1000 | |
+| `rageClickCount` / `rageClickWindowMs` | 3 / 1000 | |
+| `stuckBusyMs` | 10000 | |
+| `layoutShiftScore` | 0.1 | |
+| `slowInputMs` | 200 | |
+| `now` | last event time (SDK: current time) | When `stuckBusyMs` is measured. |
 
 ## Performance signals
 
@@ -105,5 +157,8 @@ sink.snapshots; // { sha256, serialized, body }
 | `resizeSettleMs` | 500 | Quiet time after the last resize. |
 | `visibleSettleMs` | 300 | Delay after the tab is visible again. |
 | `ignoreSelector` | none | Extra subtrees recorded as one `ignored` box. |
+| `findings` | `true` | Run the UI checks and send `ui.finding` events. |
+| `detect` | defaults above | UI check thresholds. |
+| `theme` | `prefers-color-scheme` | `() => "light" \| "dark" \| "unknown"`: the theme actually showing, for apps with their own toggle. Read at every snapshot; any other value, or a throw, is recorded as `unknown`. |
 
 The transport options above (`maxQueueEvents`, `flushIntervalMs`, …) keep their v1 defaults.

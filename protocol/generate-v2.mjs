@@ -49,13 +49,18 @@ const LegacyData = {
       duration_ms: nullable(ms),
       count: nullable(count),
       request_label: nullable(str(64, LABEL)),
+      target_key: {
+        ...int(1, 1000000),
+        description: "interaction.started for a click: an opaque per-page-session number for the element clicked (the nearest control or label inside control_id, else the clicked element). Only equality is meaningful; rage_click groups by it. Absent before 0.3.0.",
+      },
     },
     [],
   ),
   description:
-    "v1 event data, unchanged except: sdk_version moved to the batch, and request_label (a bounded label returned by the host's requestLabel callback) was added.",
+    "v1 event data, unchanged except: sdk_version moved to the batch, request_label (a bounded label returned by the host's requestLabel callback) was added, and target_key was added in 0.3.0.",
 };
 const TRIGGERS = ["route", "click", "resize", "visible", "manual"];
+const THEMES = ["light", "dark", "unknown"];
 const SnapshotData = {
   ...strict({
     sha256: { type: "string", pattern: SHA, description: "SHA-256 of the uncompressed snapshot body bytes; the body is stored at /v2/snapshots/{sha256}." },
@@ -70,7 +75,8 @@ const SnapshotData = {
     walk_ms: ms,
     slices: int(1, 1000000),
     max_slice_ms: ms,
-  }),
+    theme: { type: "string", enum: THEMES, description: "Color scheme on screen, as in the body's viewport.theme. Absent before 0.3.0." },
+  }, ["sha256", "trigger", "route_template", "viewport_width", "viewport_height", "element_count", "truncated", "torn", "bytes", "walk_ms", "slices", "max_slice_ms"]),
   description: "A screen was captured. Sent once per distinct sha256 per page session.",
 };
 const SIGNALS = ["layout_shift", "event_timing", "long_task", "image_error", "uncaught_error"];
@@ -90,12 +96,21 @@ const ClickData = {
     route_changed: { type: "boolean" },
     dialog_opened: { type: "boolean" },
     focus_moved: { type: "boolean" },
+    target_interactive: { type: "boolean", description: "The click landed on a control (button, link, form field, label, summary, control role or tabindex), not only inside a container. Absent before 0.3.0." },
+    value_changed: { type: "boolean", description: "An input or change event fired on the clicked field (checkbox, radio, select). Absent before 0.3.0." },
+    field_focused: { type: "boolean", description: "The click put focus in a text field, select or editable region; the caret or picker is its effect. Absent before 0.3.0." },
+    new_context: { type: "boolean", description: "The click opened a new tab or window (link target, modifier key, download or window.open). Absent before 0.3.0." },
     overlapped: { type: "boolean", description: "Another click started before this one settled (on both clicks). Counts are never shared between them." },
     incomplete: { type: "boolean", description: "The window ended by timeout or by the page being hidden/unloaded." },
     end_reason: { type: "string", enum: ["settled", "overlapped", "timeout", "page_hidden"] },
     before_sha256: nullable({ type: "string", pattern: SHA }),
     after_sha256: nullable({ type: "string", pattern: SHA }),
-  }),
+  }, [
+    "action", "control_id", "route_template", "first_feedback_ms", "settle_ms", "mutation_count",
+    "request_count", "request_failed_count", "error_count", "long_task_count", "layout_shift_score",
+    "route_changed", "dialog_opened", "focus_moved", "overlapped", "incomplete", "end_reason",
+    "before_sha256", "after_sha256",
+  ]),
   description:
     "What followed a click until the page was quiet for clickSettleMs with no observed request in flight. Always attribution \"inferred\"; interaction_id is the click's interaction.started id. Requests in the window are counted here and never marked explicit.",
 };
@@ -122,6 +137,7 @@ const ElementRef = strict(
     tag: str(64, "^[a-z][a-z0-9-]{0,63}$"),
     role: nullable(str(32, "^[a-z]{1,32}$")),
     test_id: nullable(str(128, ID)),
+    stable_id: { ...str(1024, "^[#*A-Za-z0-9_.:/-]{1,1024}$"), description: "Identity used by the fingerprint: the test ID, or a structural tag path from the nearest ancestor with a test ID (#anchor/div/button), from the root, or after * when cut at 8 tags. Not unique: siblings with the same tags share a path." },
     x: num(-1e7, 1e7),
     y: num(-1e7, 1e7),
     width: num(0, 1e7),
@@ -134,15 +150,16 @@ const ElementRef = strict(
 const FindingData = {
   ...strict(
     {
-      check: { ...str(64, "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$"), description: "Check identifier, e.g. layout.text_overlap, hit.blocked, layout.clipped_text, click.no_feedback." },
+      check: { ...str(64, "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$"), description: "Check identifier: layout.overlap, layout.spill, layout.page_h_scroll, layout.offscreen_control, layout.small_tap_target, layout.clipped_text, click.dead_click, click.rage_click, click.slow_feedback, click.silent_failure, click.error_after_click, stability.stuck_busy, stability.layout_shift, stability.slow_input or stability.broken_image." },
       check_version: int(1, 1000),
-      fingerprint: { type: "string", pattern: "^[0-9a-f]{16,64}$", description: "Stable grouping key computed from check, route_template and element identity; never from text." },
+      fingerprint: { type: "string", pattern: "^[0-9a-f]{16,64}$", description: "Stable grouping key: SHA-256 (first 32 hex) of check, route_template, viewport width band and the elements' stable_id (or control_id); never coordinates, scroll offsets or text." },
       route_template: nullable(str(256, ROUTE)),
       snapshot_sha256: nullable({ type: "string", pattern: SHA }),
       viewport_width: int(0, 100000),
       viewport_height: int(0, 100000),
-      subject: ElementRef,
+      subject: { ...nullable(ElementRef), description: "The element the finding is about; null when it has no element (click and performance findings without a matching snapshot row)." },
       other: nullable(ElementRef),
+      control_id: { ...nullable(str(128)), description: "The clicked control's identifier, for click findings." },
       evidence: {
         type: "object",
         description:
@@ -156,7 +173,7 @@ const FindingData = {
     },
     ["check", "check_version", "fingerprint", "route_template", "snapshot_sha256", "viewport_width", "viewport_height", "subject", "other", "evidence"],
   ),
-  description: "A check matched. Emitted by checks (browser or tests); the SDK capture layer itself does not emit findings.",
+  description: "A check matched: a pointer with measured evidence, never a verdict. The browser SDK runs the checks in idle time and sends each fingerprint once per page session; tests and services can run the same checks (@codepress/interactions-browser/detect) over stored snapshots and events.",
 };
 
 const envelope = (typeSchema, dataRef, attribution) =>
@@ -222,7 +239,9 @@ const col = (items, desc) => ({ type: "array", maxItems: 50000, items, ...(desc 
 const coord = num(-1e7, 1e7);
 const size = num(0, 1e7);
 const idx = int(-1, 49999);
-const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512 };
+const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512, popover_open: 1024, ellipsis: 2048, broken_image: 4096, aria_hidden: 8192 };
+/** Flags 0.2.0 bodies do not list in their legend. */
+const LATER_FLAGS = ["popover_open", "ellipsis", "broken_image", "aria_hidden"];
 const snapshot = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: base + "v2-snapshot.schema.json",
@@ -240,7 +259,9 @@ const snapshot = {
       device_pixel_ratio: num(0, 100),
       scroll_x: coord,
       scroll_y: coord,
-    }),
+      coarse_pointer: { type: "boolean", description: "(pointer: coarse) matched: the primary input is touch. Absent before 0.3.0." },
+      theme: { type: "string", enum: THEMES, description: "Color scheme on screen: the host's theme() option when given (anything outside the enum is unknown), else prefers-color-scheme. Absent before 0.3.0." },
+    }, ["width", "height", "client_width", "client_height", "device_pixel_ratio", "scroll_x", "scroll_y"]),
     document: strict({ width: size, height: size }),
     element_count: int(0, 50000),
     truncated: { type: "boolean", description: "The walk stopped at maxElements or rows were dropped to fit maxSnapshotBytes." },
@@ -248,7 +269,11 @@ const snapshot = {
     legend: {
       ...strict({
         position: { type: "array", prefixItems: POSITIONS.map((p) => ({ const: p })), items: false, minItems: 5 },
-        flags: strict(Object.fromEntries(Object.entries(FLAGS).map(([k, v]) => [k, { const: v }]))),
+        // Flags added after 0.2.0 are optional so older bodies still validate.
+        flags: strict(
+          Object.fromEntries(Object.entries(FLAGS).map(([k, v]) => [k, { const: v }])),
+          Object.keys(FLAGS).filter((k) => !LATER_FLAGS.includes(k)),
+        ),
         hit_points: {
           type: "array",
           prefixItems: ["center", "top_left", "top_right", "bottom_left", "bottom_right"].map((p) => ({ const: p })),
@@ -274,7 +299,7 @@ const snapshot = {
       height: col(size),
       z_index: col(nullable(int(-2147483648, 2147483647)), "Computed z-index; null for auto."),
       position: col(int(0, 4), "Index into legend.position (computed CSS position)."),
-      flags: col(int(0, 1023), "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: inside an open shadow root."),
+      flags: col(int(0, 16383), "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. aria_hidden: the element or an ancestor has aria-hidden=true. Bodies before 0.3.0 never set the last four."),
       text_length: col(count, "Characters in direct, non-whitespace text node children (trimmed). The text itself is never read into the body."),
     }),
     text_boxes: {
