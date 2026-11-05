@@ -48,7 +48,8 @@
     "test": "vitest run",
     "test:browser": "playwright test",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
-    "pack:check": "node scripts/pack-check.mjs"
+    "pack:check": "node scripts/pack-check.mjs",
+    "bench": "node scripts/overhead.mjs"
   },
   "repository": {
     "type": "git",

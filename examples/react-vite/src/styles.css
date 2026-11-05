@@ -1,0 +1,139 @@
+:root {
+  --ink: #1d2433;
+  --muted: #5b6475;
+  --line: #dde1e8;
+  --surface: #ffffff;
+  --page: #f5f6f8;
+  --accent: #3b5bdb;
+  --accent-ink: #ffffff;
+  --badge: #f59f00;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--page);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  padding: 0 32px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.logo {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.link-button {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.pricing {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.pricing h1 {
+  margin: 0 0 8px;
+  font-size: 32px;
+}
+
+.lede {
+  margin: 0 0 32px;
+  color: var(--muted);
+}
+
+.plans {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  text-align: left;
+}
+
+.plan {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 24px 24px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.plan--featured {
+  border-color: var(--accent);
+}
+
+.plan h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.plan-price {
+  margin: 8px 0 16px;
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.plan-price span {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.plan-features {
+  margin: 0 0 24px;
+  padding-left: 20px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+
+.plan-badge {
+  position: absolute;
+  right: 24px;
+  bottom: 30px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: var(--badge);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.plan-cta {
+  margin-top: auto;
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.status {
+  min-height: 24px;
+  margin: 24px 0 0;
+  color: var(--muted);
+}
