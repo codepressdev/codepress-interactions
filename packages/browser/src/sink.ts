@@ -22,6 +22,12 @@ export interface SinkContext {
   keepalive: boolean;
   /** Aborted when the SDK's request timeout passes or capture stops. */
   signal: AbortSignal;
+  /**
+   * The page's `fetch` as it was before the SDK wrapped it. Requests made with it
+   * are never recorded. Requests a sink starts before its first `await` are not
+   * recorded either, whichever `fetch` or `XMLHttpRequest` they use.
+   */
+  fetch: typeof fetch;
 }
 
 /** A destination for evidence. Throwing or hanging is safe: calls are timed out and isolated. */
@@ -141,7 +147,7 @@ export function createHttpSink(
  * after `timeoutMs`.
  */
 export function callSink(
-  invoke: (context: SinkContext) => Promise<SinkResult | void> | SinkResult | void,
+  invoke: (context: Omit<SinkContext, "fetch">) => Promise<SinkResult | void> | SinkResult | void,
   timeoutMs: number,
   keepalive: boolean,
   stopSignal?: AbortSignal,

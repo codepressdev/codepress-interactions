@@ -45,13 +45,14 @@ import {
   safeTraceId,
   sha256Hex,
   validInteractionId,
+  RecentKeys,
 } from "./util";
 
 const ATTRIBUTION = "explicit synchronous runAction only" as const;
 const CONTROLS = "button,a,form,input[type=submit],[role=button]";
 const MAX_SENT_HASHES = 1000;
 const MAX_PENDING_SNAPSHOTS = 4;
-/** Fingerprints remembered per page session; past this the oldest may be sent again. */
+/** Fingerprints remembered per page session; past this the least recently seen may be sent again. */
 const MAX_FINDINGS = 2000;
 /** Events kept for the click and stability checks. */
 const MAX_TIMELINE = 500;
@@ -63,6 +64,21 @@ const TARGETS = `${INTERACTIVE},label`;
  */
 const LABEL_INTERACTIVE =
   "a[href],button,input:not([type=hidden]),select,textarea,label,details,embed,iframe,img[usemap],audio[controls],video[controls]";
+/** Form-associated fields whose form owner can differ from their DOM ancestor form (the `form` attribute). */
+const FORM_FIELDS = "input,select,textarea,button";
+
+/**
+ * The tracked control a click on `element` belongs to: the nearest control
+ * above it, except that a field joined to a form with the `form` attribute
+ * belongs to that form, wherever it sits in the DOM.
+ */
+function controlOf(element: Element | null): Element | null {
+  if (!element) return null;
+  const found = element.closest(CONTROLS);
+  if (found && found.tagName !== "FORM") return found;
+  const owner = element.matches(FORM_FIELDS) ? (element as HTMLInputElement).form : null;
+  return owner ?? found;
+}
 const TIMELINE_TYPES = new Set(["interaction.started", "ui.click.settled", "ui.state.changed", "perf.summary", "ui.snapshot"]);
 
 type EventData = EvidenceEvent["data"];
@@ -86,6 +102,9 @@ export class Runtime {
   private sourceId = crypto.randomUUID();
   private context: string | null = null;
   private originalFetch = window.fetch;
+  /** Above 0 while a sink call runs synchronously: its own requests are not the app's. */
+  sinkDepth = 0;
+  private sinkFetch: typeof fetch = (input, init) => this.originalFetch.call(window, input, init);
   private requestTarget = Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!;
   private requestHeaders = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
   private wrappedFetch?: typeof fetch;
@@ -128,7 +147,7 @@ export class Runtime {
   private walks = 0;
   // Findings
   private findingsEnabled: boolean;
-  private sentFindings = new Set<string>();
+  private sentFindings = new RecentKeys(MAX_FINDINGS);
   private timeline: TimelineEvent[] = [];
   private timelineScheduled = false;
   /** Per page session: the clicked element's opaque key, so rage clicks group by element. */
@@ -361,7 +380,11 @@ export class Runtime {
         )
           forwarded = null;
       }
-      const target = (forwarded ? forwarded.closest(CONTROLS) : null) ?? (clicked ? clicked.closest(CONTROLS) : null);
+      // A label click belongs to its field's control (a field can join another
+      // form through the `form` attribute); only a field with none falls back
+      // to the label's own control.
+      const fieldControl = forwarded ? controlOf(forwarded) : null;
+      const target = fieldControl ?? controlOf(clicked);
       if (
         !target ||
         !this.root.contains(target) ||
@@ -389,7 +412,7 @@ export class Runtime {
           : {}),
       });
       if (event.type === "click") this.clicks?.begin(id, controlId, target, event);
-      if (forwarded && forwarded.closest(CONTROLS) === target) {
+      if (forwarded && fieldControl) {
         // Skip the click the browser is about to forward to the field.
         const field = forwarded;
         labelControl = field;
@@ -580,6 +603,15 @@ export class Runtime {
     });
   }
 
+  private inSink<T>(call: () => T): T {
+    this.sinkDepth++;
+    try {
+      return call();
+    } finally {
+      this.sinkDepth--;
+    }
+  }
+
   private requestUrl(input: string): URL | null {
     try {
       const url = new URL(input, document.baseURI);
@@ -609,7 +641,7 @@ export class Runtime {
     init: RequestInit | undefined,
     id: string | null,
   ): Promise<Response> {
-    if (!this.active) return this.originalFetch.call(window, input, init);
+    if (!this.active || this.sinkDepth) return this.originalFetch.call(window, input, init);
     // Brand-check via native Request slots, which work across realms and ignore
     // expando properties. Resolve other inputs once and send the same URL we
     // checked: inspecting one representation and sending another leaks headers.
@@ -735,13 +767,13 @@ export class Runtime {
    * with the right width band and fingerprint.
    */
   private emitFindings(findings: Finding[], defer = false): void {
+    this.sentFindings.beginRun();
     for (const finding of findings) {
       if (!this.active) return;
       if (defer && !(finding.viewport_width > 0)) continue;
-      if (this.sentFindings.has(finding.fingerprint)) continue;
-      if (this.sentFindings.size >= MAX_FINDINGS)
-        this.sentFindings.delete(this.sentFindings.values().next().value!);
-      this.sentFindings.add(finding.fingerprint);
+      // Seen again: refreshed, not resent. Full: more new findings in one run
+      // than the memory holds; this one waits for a later run.
+      if (this.sentFindings.admit(finding.fingerprint) !== "new") continue;
       this.record(
         "ui.finding",
         finding.interaction_id,
@@ -825,7 +857,7 @@ export class Runtime {
     };
     const send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
       const entry = requests.get(this);
-      const url = runtime.active && entry ? runtime.requestUrl(entry.url) : null;
+      const url = runtime.active && entry && !runtime.sinkDepth ? runtime.requestUrl(entry.url) : null;
       if (entry && url) {
         try {
           const id =
@@ -981,9 +1013,11 @@ export class Runtime {
         this.uploading = item;
         const result = await callSink(
           (context) =>
-            this.sink.sendSnapshot(
-              { sha256: item.sha256, body: item.body, serialized: item.serialized },
-              context,
+            this.inSink(() =>
+              this.sink.sendSnapshot(
+                { sha256: item.sha256, body: item.body, serialized: item.serialized },
+                { ...context, fetch: this.sinkFetch },
+              ),
             ),
           this.timeoutMs,
           false,
@@ -1088,7 +1122,10 @@ export class Runtime {
     const pending = this.pending;
     if (!pending || Date.now() < pending.nextAt) return;
     const result: SinkResult = await callSink(
-      (context) => this.sink.sendBatch(pending.batch, pending.serialized, context),
+      (context) =>
+        this.inSink(() =>
+          this.sink.sendBatch(pending.batch, pending.serialized, { ...context, fetch: this.sinkFetch }),
+        ),
       this.timeoutMs,
       keepalive,
       this.stopController.signal,

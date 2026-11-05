@@ -1,7 +1,7 @@
 {
   "batch_id": "00000000-0000-4000-8000-000000000001",
   "schema_version": 2,
-  "sdk_version": "0.3.0",
+  "sdk_version": "1.0.0",
   "release": "shop-web@1.8.0",
   "events": [
     {
@@ -25,9 +25,9 @@
         "truncated": false,
         "torn": false,
         "bytes": 1579,
-        "walk_ms": 3.5,
+        "walk_ms": 1.2,
         "slices": 1,
-        "max_slice_ms": 3.5,
+        "max_slice_ms": 1.2,
         "theme": "light"
       }
     },
@@ -43,7 +43,7 @@
       "type": "perf.summary",
       "attribution": "unknown",
       "data": {
-        "window_ms": 12.3,
+        "window_ms": 4.1,
         "layout_shift_score": 0,
         "layout_shift_count": 0,
         "long_task_count": 0,
@@ -101,7 +101,7 @@
       "data": {
         "outcome": "completed",
         "phase": "http_200",
-        "duration_ms": 8.7,
+        "duration_ms": 14.1,
         "trace_id": "4bf92f3577b34da6",
         "request_label": "cart.post"
       }
@@ -121,8 +121,8 @@
         "action": "click",
         "control_id": "checkout.save",
         "route_template": "/checkout/:id",
-        "first_feedback_ms": 10.1,
-        "settle_ms": 10.1,
+        "first_feedback_ms": 14.7,
+        "settle_ms": 14.7,
         "mutation_count": 1,
         "request_count": 1,
         "request_failed_count": 0,
@@ -136,6 +136,7 @@
         "value_changed": false,
         "field_focused": false,
         "new_context": false,
+        "selection_changed": false,
         "overlapped": false,
         "incomplete": false,
         "end_reason": "settled",
@@ -202,11 +203,14 @@
           "subject_text_covered": true,
           "subject_text_overlap_px": 23.4,
           "subject_text_covered_ratio": 0.0305,
+          "subject_content_covered": true,
           "other_text_overlap_px": 0,
           "paint_order_from_hit_test": true,
           "subject_overlay": false,
           "other_overlay": false,
           "other_pointer_events_none": false,
+          "subject_interactive": true,
+          "other_interactive": false,
           "subject_has_content": true,
           "other_has_content": false,
           "subject_decorative": false,

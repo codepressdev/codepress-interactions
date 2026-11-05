@@ -1,115 +1,109 @@
 # CodePress Interactions
 
-Apache-2.0 browser and Python SDKs for machine-readable interaction evidence.
-The hosted service stores searchable summaries separately from compressed event
-batches. This repository contains the SDKs and their versioned wire contract.
+See your UI as data, and let your own coding agent fix what's wrong with it.
 
-The browser SDK is released to npm as `@codepress/interactions-browser` by
-[its publish workflow](.github/workflows/publish-browser.yml), and the Playwright
-helpers as `@codepress/interactions-playwright` by
-[theirs](.github/workflows/publish-playwright.yml). The Python
-package is not yet published to PyPI, and the hosted service is not publicly available.
+A small browser SDK records each screen your app shows as element boxes (positions, sizes, roles, flags, never text), what followed each click, and performance signals. It runs UI checks over that data in idle time: overlapping elements, content spilling out of its box, clipped text, controls out of reach, small tap targets, dead clicks, rage clicks, stuck busy states and more. Each finding is a pointer with measured evidence, not a verdict. You send the data wherever you want: to a file on disk, your own backend, or a test assertion. The same checks run in Node and in Playwright, so a fix can be proven with a test.
 
-## Browser
+Nothing here needs a CodePress account or service. Apache-2.0.
 
-Call once during browser application initialization:
+| Package | |
+| --- | --- |
+| [`@codepress/interactions-browser`](packages/browser/README.md) | The SDK: capture, snapshots, checks, sinks. Framework independent, ESM and CommonJS, TypeScript types. |
+| [`@codepress/interactions-react`](packages/react/README.md) | An optional `useInteractions` hook that owns the SDK's lifecycle in a component. |
+| [`@codepress/interactions-playwright`](packages/playwright/README.md) | `findIssues` and `expectNoFindings` for Playwright tests. |
 
-```ts
-import { initInteractions } from "@codepress/interactions-browser";
+## Install
 
-const interactions = initInteractions({
-  projectKey: "PUBLIC_PROJECT_KEY",
-  endpoint: "https://YOUR_TELEMETRY_HOST",
-  allowedApiOrigins: ["https://YOUR_API_HOST"],
-});
+```sh
+npm install @codepress/interactions-browser
 ```
 
-It captures semantic clicks/submits, navigation, structural UI changes, busy/progress
-signals, and allowed-origin fetch/XHR observations. Dynamically mounted controls use
-the same recorder. React applications can call this during browser bootstrap or use
-the optional [React hook](packages/react/README.md).
-
-Automatic observation does not guarantee causal attribution. For actions crossing
-an asynchronous boundary, bind the request explicitly:
-
 ```ts
-await interactions.runAction("transfer.confirm", async ({ fetch }) => {
-  await fetch("/api/transfer", { method: "POST" });
-});
+import { initInteractions, createMemorySink } from "@codepress/interactions-browser";
+
+const sink = createMemorySink(); // or your own { sendBatch, sendSnapshot }
+initInteractions({ sink });
+// sink.batches: protocol v2 batches; sink.snapshots: screen snapshot bodies
 ```
 
-The bound fetch propagates the interaction UUID only to configured API origins.
-Ordinary unrelated requests stay unlinked. There is no time-window/last-click guess.
-See [browser behavior and limits](packages/browser/README.md).
+Call it once, early, in browser code. Under SSR, or with `enabled: false`, it returns a handle that does nothing. A sink is any object with `sendBatch(batch, serialized)` and `sendSnapshot({ sha256, body, serialized })`; [Sinks](packages/browser/README.md#sinks) has the contract.
 
-The SDK also runs UI checks (overlaps, spills, clipped text, dead and rage clicks,
-stuck busy states and more) and sends what they find as `ui.finding` events with
-measured evidence. The same checks run in Node and in tests:
+To see it end to end, run [`examples/react-vite`](examples/react-vite): a small React app with a planted layout bug, a sink that writes JSON to `.interactions/` through the Vite dev server, and a Playwright test that fails until the bug is fixed.
+
+## What is captured
+
+- **Clicks and submits** on semantic controls (buttons, links, fields, ARIA roles, labels), including controls mounted later. No per-control annotations. A control is identified by its `data-interaction-id` or `data-testid` when it has one, otherwise by a short tag path.
+- **What followed each click** until the page went quiet: time to first visible feedback, DOM mutation counts, requests and their outcome, route changes, dialogs, focus moves, layout shift, long tasks, errors, and hashes of the screen before and after.
+- **Screen snapshots** after a route settles, a click settles, a resize settles or the tab comes back: every rendered element's box, tag, role, safe test ID, z-index, CSS position, flags (visible, interactive, clipped, opaque, overlay, ...), the length of its own text, the boxes its text occupies, and hit tests for controls.
+- **Route templates**, never URLs: every path segment becomes `:id` unless you list it as a static word.
+- **Requests** to origins you allow: method, a status label, duration, success or error.
+- **Performance summaries**: layout shifts, long tasks, event timing, image and script errors.
+- **Findings** from the checks below.
+
+## What is never captured
+
+Page text, input values, HTML, attribute values (other than roles and safe test IDs), screenshots, URLs, paths, queries, hashes, request or response bodies, headers, cookies, user identifiers, and anything inside a subtree marked `data-interactions-exclude`. Nothing is written to browser storage. The [schemas](protocol) bound every field, so a receiver can reject anything else. Details are in the [browser package README](packages/browser/README.md).
+
+## How the checks work
+
+The checks are pure functions over a snapshot body and the event timeline: no `document`, no `window`. The browser SDK runs them in idle time after each new snapshot, after each settled click and at each flush, and sends each finding once per fingerprint as a `ui.finding` event. `@codepress/interactions-browser/detect` runs the same functions in Node, and the Playwright helpers run them on a page under test, so a finding seen in the browser can be reproduced and proven fixed in a test.
 
 ```ts
 import { expectNoFindings } from "@codepress/interactions-playwright";
 
-await expectNoFindings(page);
+await page.goto("/checkout/42");
+await expectNoFindings(page, { routeSegments: ["checkout"] });
 ```
 
-See [UI checks](packages/browser/README.md#ui-checks) and the
-[Playwright helpers](packages/playwright/README.md).
+A finding has the check (`layout.overlap`, `layout.spill`, `layout.clipped_text`, `click.dead_click`, `click.rage_click`, ...), the elements it is about (their snapshot row, test ID, structural path and box), measured evidence (pixels covered, blocked hit-test points of a control, whether text is covered, time to feedback, ...) and a fingerprint. The fingerprint hashes the check, route template, viewport width band and element identities, never coordinates or text, so the same bug has the same fingerprint at any scroll offset, in any session, on any machine. Findings are sorted most urgent first: blocked controls, then covered or clipped text, then the rest (those involving a control first), then decorative or empty overlaps. Nothing is dropped; you decide what is a bug and accept the rest with `ignoreFingerprints` or `data-layout-ignore`.
 
-## Django and Celery
+[UI checks](packages/browser/README.md#ui-checks) lists every check, its thresholds, its evidence keys and the [measured behaviors worth knowing](packages/browser/README.md#measured-behaviors-worth-knowing).
 
-At the end of Django settings:
+## Let an agent fix findings
 
-```python
-from codepress_interactions.django import configure
-configure(settings=globals())
-```
+[`skills/fix-ui-findings`](skills/fix-ui-findings/SKILL.md) is a portable skill for coding agents (Claude Code, Codex, Cursor and others that read skill files). Given an app with a sink that writes findings to disk, it has the agent read the findings, reproduce one in a Playwright test, fix the source and prove the fix with `expectNoFindings`. Copy the folder into your agent's skills directory or point the agent at the file.
 
-Set `INTERACTIONS_ENABLED=true`, `INTERACTIONS_ENDPOINT` to the service base URL,
-and `INTERACTIONS_SERVER_KEY` in the server environment. Never expose the server key
-to a browser. Django request middleware is installed automatically; when Celery is
-installed, its publish/worker hooks are installed by the same configuration call.
-See [Python installation, standalone use and limits](python/README.md).
+## Overhead
 
-## Evidence contract
+Measured with `pnpm --filter @codepress/interactions-browser bench` ([script](packages/browser/scripts/overhead.mjs)) in headless Chromium at 1280×720 on an Apple M1 Max, median of 5 runs, without throttling and with 4× CPU throttling (closer to a mid-range phone). Your numbers will differ; the script prints its machine with them.
 
-[JSON Schema](protocol/v1-batch.schema.json) and [sample batch](protocol/v1-batch.json)
-define the v1 transport. The browser SDK sends protocol v2
-([batch schema](protocol/v2-batch.schema.json), [sample](protocol/v2-batch.json)), which adds
-screen snapshots ([body schema](protocol/v2-snapshot.schema.json),
-[sample](protocol/v2-snapshot.json)), click follow-through, performance summaries and
-measured findings; the schemas are generated by `node protocol/generate-v2.mjs protocol`. An interaction identifies a user attempt; backend operations
-and immutable event observations form its timeline. Backend success and visible UI
-completion are distinct observations. Missing evidence means unknown, not failure.
+- **Bundle:** 24.0 KB gzip (67.1 KB minified) for the main entry, checks included. The checks alone (`/detect`) are 9.8 KB gzip.
+- **Idle page:** about 0.6 ms of extra main-thread time per 5 seconds, no long tasks, one flush timer and one structural MutationObserver.
+- **Clicks:** the SDK's click listener adds 0.09 ms (0.47 ms at 4×, p95 1.1 ms) before your handler runs.
+- **Snapshots:** the walk runs in idle-time slices of about 6–8 ms (`maxSliceMs`) and never caused a long task:
 
-Retries reuse identical batch bytes and IDs. Memory, batch sizes, retries and network
-waits are bounded. Diagnostics distinguish queued/dropped events from server
-acknowledgments. No disk/browser-storage spool is used; process/tab death can lose
-pending observations. This is telemetry, not a durable business-event ledger.
+  | Elements | Walk CPU (1× / 4×) | Longest task (1× / 4×) | Checks, one idle task (1× / 4×) | Body (gzip) |
+  | --- | --- | --- | --- | --- |
+  | ~500 | 5.9 / 25 ms | 8.6 / 14 ms | 4.7 / 16 ms | 32 KB (3.7 KB) |
+  | ~2,000 | 16 / 80 ms | 7.2 / 18 ms | 8.1 / 34 ms | 134 KB (12 KB) |
+  | ~5,000 | 34 / 171 ms | 8.3 / 30 ms | 14 / 50 ms | 343 KB (27 KB) |
 
-Raw HTML, UI text, input values, request/response bodies and URL queries are not sent.
-`data-interactions-exclude` excludes private DOM subtrees. Explicit action/control
-identifiers should be static developer labels, never customer data. Evidence is data,
-not executable HTML or agent instructions.
+  Two steps are not sliced. Finishing a walk (serializing and hashing the body) is one task, the "longest task" column. The checks run over each new snapshot in one idle callback: on a 5,000-element page at 4× that is up to 50 ms, at the long-task threshold, and on a slower phone it would be a long task. They run only after a new snapshot, and only when the browser reports idle time; `findings: false` turns them off in the browser (the same checks still run in tests and in Node). A snapshot is taken only when a screen changes, and a body already sent in the session is not sent again.
+
+## Wire protocol
+
+Batches, snapshot bodies and findings are described by JSON Schemas in [`protocol/`](protocol), with real samples and [a guide to reading them](protocol/README.md). Within protocol version 2, changes are additive.
+
+## Hosted service (optional)
+
+CodePress, which maintains these packages, runs a hosted service that stores this data across sessions and makes it searchable. To use it, pass `endpoint` and `projectKey` instead of `sink`; the [protocol](protocol/README.md#http) documents the HTTP calls, so you can also point `endpoint` at a service of your own. None of the packages, the example or the skill need it.
+
+## Python
+
+The [Python SDK](python/README.md) in `python/` (Django and Celery request and task correlation, protocol v1) is not part of 1.0. It is not published to PyPI and its API may change.
 
 ## Development
 
 ```sh
 pnpm install
-pnpm test
+pnpm build          # the React and Playwright packages typecheck and test against the browser package's build
 pnpm typecheck
-pnpm build
+pnpm test
 pnpm --filter @codepress/interactions-browser exec playwright install chromium
-pnpm build          # the Playwright helpers test against the browser package's build
-pnpm test:browser   # real-browser tests (Chromium), browser package and Playwright helpers
-cd python
-uv sync
-uv run pytest
-uv run ruff check src tests
-uv build
+pnpm test:browser   # real-browser tests (Chromium)
 ```
 
-Core Python transport uses the standard library; Django and Celery are optional extras.
-The browser package is framework independent, with ESM, CommonJS and TypeScript outputs.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes are made and released, and [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 ## License
 

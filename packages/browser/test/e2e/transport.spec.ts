@@ -291,3 +291,47 @@ test("XMLHttpRequest.open keeps native errors for missing arguments", async ({ p
   expect(native).toBe("TypeError");
   expect(await run()).toBe(native);
 });
+
+test("a same-origin sink's own requests are not recorded as the app's, so flushing does not feed itself", async ({ page }) => {
+  const posts: string[] = [];
+  await openPage(page, '<main><button data-testid="go" onclick="fetch(\'/api/real\').catch(() => {})">Go</button></main>');
+  // Registered after openPage's route, so it answers first.
+  await page.route("https://app.test/__sink/**", (route) => {
+    posts.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 204 });
+  });
+  await page.evaluate(() => {
+    const w = window as any;
+    w.sent = [];
+    w.handle = w.CodepressInteractions.initInteractions({
+      flushIntervalMs: 3_600_000,
+      routeSettleMs: 3_600_000,
+      sink: {
+        // XHR and the page's (patched) fetch before the first await, context.fetch after it.
+        async sendBatch(batch: any, serialized: string, context: any) {
+          w.sent.push(batch);
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/__sink/xhr");
+          xhr.send(serialized);
+          await fetch("/__sink/batch", { method: "POST", body: serialized });
+          await context.fetch("/__sink/after", { method: "POST", body: serialized });
+          return "accepted";
+        },
+        async sendSnapshot(_snapshot: any, context: any) {
+          await new Promise((r) => setTimeout(r, 1));
+          await context.fetch("/__sink/snapshot", { method: "POST" });
+        },
+      },
+    });
+  });
+  await page.click('[data-testid="go"]');
+  await page.waitForTimeout(300);
+  for (let i = 0; i < 3; i++) await page.evaluate(() => (window as any).handle.flush());
+  const sent = await page.evaluate(() => (window as any).sent);
+  expect(posts).toEqual(expect.arrayContaining(["/__sink/batch", "/__sink/xhr", "/__sink/after"]));
+  // One batch with the app's request; later flushes have nothing new to send.
+  expect(sent).toHaveLength(1);
+  const types = sent[0].events.map((e: any) => e.type);
+  expect(types.filter((t: string) => t === "request.started")).toHaveLength(1);
+  expect(types.filter((t: string) => t === "request.completed")).toHaveLength(1);
+});

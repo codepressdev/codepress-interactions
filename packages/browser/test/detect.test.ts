@@ -10,11 +10,14 @@ import {
   fingerprint,
   formatFinding,
   sha256HexSync,
+  findingTier,
+  involvesControl,
   sortFindings,
   toFindingData,
   viewportBand,
   type Finding,
   type SnapshotBody,
+  type FindingData,
   type TimelineEvent,
 } from "../src/detect/index";
 import { FLAGS, HIT_POINTS, POSITIONS } from "../src/format";
@@ -324,7 +327,90 @@ describe("sorting", () => {
     ];
     const sorted = sortFindings(input);
     expect(sorted).toHaveLength(input.length);
-    expect(sorted).toEqual([input[5], input[4], input[6], input[3], input[1], input[2], input[0]]);
+    // The small tap target involves a control, so it leads the rest.
+    expect(sorted).toEqual([input[5], input[3], input[4], input[6], input[1], input[2], input[0]]);
+  });
+
+  it("inside the rest, findings that involve a control come first; other tiers keep their order", () => {
+    const f = (type: Finding["type"], evidence: Finding["evidence"], control_id: string | null = null) =>
+      ({ type, evidence, control_id }) as Finding;
+    const input = [
+      f("overlap", { subject_blocked_points: 0, subject_interactive: false, other_interactive: false }),
+      f("spill", { subject_interactive: false }),
+      f("page_h_scroll", {}),
+      f("small_tap_target", { width_px: 16 }),
+      f("small_tap_target", { width_px: 18 }),
+      f("overlap", { subject_interactive: false, other_interactive: true }),
+      f("spill", { subject_interactive: true }),
+      f("offscreen_control", {}),
+      f("dead_click", {}, "save"),
+      f("overlap", { subject_blocked_points: 3, subject_interactive: true }),
+      f("overlap", { subject_decorative: true, subject_interactive: false, other_interactive: true }),
+    ];
+    const sorted = sortFindings(input);
+    expect(sorted).toHaveLength(input.length);
+    expect(sorted).toEqual([
+      input[9], // tier 0: blocked control
+      input[5], input[6], input[7], input[3], input[4], input[8], // the rest, with a control, by check then as found
+      input[0], input[1], input[2], // the rest, without one
+      input[10], // decorative stays last even with a control
+    ]);
+    expect(input.map((x) => involvesControl(x))).toEqual([false, false, false, true, true, true, true, true, true, true, true]);
+  });
+
+  it("a fixed header over a padded main covers no content: reported, with evidence that sorts it as empty", () => {
+    // <header style="position:fixed;height:64px"> over <main style="padding-top:64px">.
+    const els: El[] = [
+      { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+      { parent: 0, tag: "header", box: [0, 0, 1280, 64], position: "fixed", testId: "header" },
+      { parent: 1, tag: "a", box: [16, 20, 80, 24], flags: V | I, testId: "home", text: [16, 22, 80, 20] },
+      { parent: 0, tag: "main", box: [0, 0, 1280, 800], testId: "main" },
+      { parent: 3, tag: "h1", box: [16, 80, 600, 40], testId: "title", text: [16, 84, 300, 32] },
+      { parent: 3, tag: "button", box: [16, 140, 120, 40], flags: V | I, testId: "save", text: [40, 150, 60, 20] },
+    ];
+    const [padded] = checkSnapshot(body(els)).filter((x) => x.type === "overlap");
+    expect(`${padded.subject?.test_id} ${padded.other?.test_id}`).toBe("main header");
+    expect(padded.evidence).toMatchObject({
+      subject_blocked_points: 0,
+      subject_text_covered: false,
+      subject_content_covered: false,
+      subject_has_content: true,
+      other_has_content: true,
+      subject_interactive: false,
+    });
+    expect(findingTier(padded)).toBe(3);
+    // Without the padding, the heading sits under the header: content is covered.
+    const tight = els.map((el) => (el.testId === "title" ? { ...el, box: [16, 20, 600, 40] as El["box"], text: [16, 24, 300, 32] as El["text"] } : el));
+    const [covered] = checkSnapshot(body(tight)).filter((x) => x.type === "overlap");
+    expect(covered.evidence).toMatchObject({ subject_content_covered: true, subject_text_covered: true });
+    expect(findingTier(covered)).toBe(1);
+    // An image under the header is content too, though it has no text.
+    const image = els.map((el) => (el.testId === "title" ? { ...el, tag: "img", box: [16, 20, 200, 100] as El["box"], text: undefined } : el));
+    const [pictured] = checkSnapshot(body(image)).filter((x) => x.type === "overlap");
+    expect(pictured.evidence).toMatchObject({ subject_content_covered: true, subject_text_covered: false });
+    expect(findingTier(pictured)).toBe(2);
+  });
+
+  it("without a deciding hit test, a positioned ancestor shared by both sides does not lift either", () => {
+    // <div style="position:relative"> holding a pointer-events:none absolute badge, then a static button.
+    // The badge paints over the button; hit tests pass through the badge, so they tie.
+    const els: El[] = [
+      { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+      { parent: 0, tag: "div", box: [100, 100, 320, 400], position: "relative", testId: "card" },
+      { parent: 1, tag: "span", box: [300, 420, 100, 28], position: "absolute", flags: V | FLAGS.pointer_events_none, testId: "badge", text: [310, 424, 80, 20] },
+      { parent: 1, tag: "button", box: [120, 420, 280, 44], flags: V | I, testId: "cta", text: [200, 432, 120, 20] },
+    ];
+    const hits = [{ row: 3, tested: 5, blocked: 0, points: 0, top: -1 }];
+    const [overlap] = checkSnapshot(body(els, { hits })).filter((x) => x.type === "overlap");
+    expect(`${overlap.subject?.test_id} ${overlap.other?.test_id}`).toBe("cta badge");
+    // A positioned wrapper below the shared parent still counts for its side.
+    const wrapped: El[] = [
+      ...els.slice(0, 3),
+      { parent: 1, tag: "div", box: [120, 420, 280, 44], position: "relative", testId: "wrap" },
+      { ...els[3], parent: 3 },
+    ];
+    const [lifted] = checkSnapshot(body(wrapped, { hits: [{ row: 4, tested: 5, blocked: 0, points: 0, top: -1 }] })).filter((x) => x.type === "overlap");
+    expect(`${lifted.subject?.test_id} ${lifted.other?.test_id}`).toBe("badge wrap");
   });
 
   it("records content and decoration as overlap and spill evidence", () => {
@@ -490,6 +576,22 @@ describe("click checks", () => {
       expect(rage(clicks([null, null, null]))[0].evidence).toMatchObject({ clicks_with_feedback: 0 });
     });
 
+    it("a caret in a focused text field or a selection change answers a click", () => {
+      // Repeated clicks in one text field of a form, and a triple-click selecting its text.
+      const field = (ms: number, extra: Record<string, unknown>) =>
+        settled({ control_id: "prefs", first_feedback_ms: null, ...extra }, ms + 50, `s${ms}`);
+      const burst = (extra: (i: number) => Record<string, unknown>) =>
+        [snap(), ...[0, 1, 2].flatMap((i) => [start(i * 150), field(i * 150, extra(i))])];
+      expect(rage(burst(() => ({ field_focused: true })))).toEqual([]);
+      expect(rage(burst((i) => ({ field_focused: i === 0, selection_changed: i > 0 })))).toEqual([]);
+      // Plain text inside a form: a triple-click selects, so each press changed the selection.
+      expect(rage(burst(() => ({ target_interactive: false, selection_changed: true })))).toEqual([]);
+      // Any click that neither focused nor selected nor answered keeps it rage.
+      const one = rage(burst((i) => ({ field_focused: i < 2 })));
+      expect(one).toHaveLength(1);
+      expect(one[0].evidence).toMatchObject({ clicks_with_feedback: 2, clicks_settled: 3 });
+    });
+
     it("waits while the answered clicks are still settling, and reports once one is unanswered", () => {
       const early = [snap(), start(0), answer(0, 12), start(300), start(600)];
       expect(rage(early)).toEqual([]);
@@ -547,5 +649,28 @@ describe("output", () => {
       for (const value of Object.values(finding.evidence))
         expect(value === null || typeof value === "boolean" || Number.isFinite(value)).toBe(true);
     }
+  });
+});
+
+describe("wire data", () => {
+  it("sortFindings, formatFinding and involvesControl take ui.finding data as a sink receives it", () => {
+    const found = sortFindings(checkSnapshot(body([
+      { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+      { parent: 0, tag: "div", box: [0, 0, 400, 300], testId: "a", text: [10, 10, 100, 20] },
+      { parent: 0, tag: "div", box: [100, 100, 400, 300], position: "absolute", testId: "b", text: [120, 120, 100, 20] },
+      { parent: 0, tag: "button", box: [600, 0, 100, 40], flags: V | I, testId: "save", text: [620, 10, 60, 20] },
+      { parent: 0, tag: "div", box: [650, 20, 100, 40], position: "absolute", testId: "tip", text: [660, 30, 60, 20] },
+    ])));
+    expect(found.length).toBeGreaterThan(1);
+    const wire: FindingData[] = JSON.parse(JSON.stringify(found.map(toFindingData)));
+    expect(wire.every((f) => !("type" in f))).toBe(true);
+    const shuffled = [...wire].reverse();
+    expect(sortFindings(shuffled).map((f) => f.fingerprint)).toEqual(found.map((f) => f.fingerprint));
+    expect(wire.map(formatFinding)).toEqual(found.map(formatFinding));
+    expect(wire.map(involvesControl)).toEqual(found.map(involvesControl));
+    // An outer pair that blocks a control inside its subject is about that control.
+    const outer = { check: "layout.overlap", control_id: null, evidence: { subject_interactive: false, other_interactive: false, subject_blocked_controls: 1 } };
+    expect(involvesControl(outer)).toBe(true);
+    expect(involvesControl({ ...outer, evidence: { ...outer.evidence, subject_blocked_controls: 0 } })).toBe(false);
   });
 });

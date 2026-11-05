@@ -1,6 +1,6 @@
 # @codepress/interactions-playwright
 
-Playwright helpers that run the [CodePress Interactions](../../README.md) UI checks on a page under test: overlapping elements, content spilling out of its box, horizontal page scroll, controls out of reach, small tap targets (touch), clipped text and broken images.
+Playwright helpers that run the [CodePress Interactions](https://github.com/quantfive/codepress-interactions/blob/main/README.md) UI checks on a page under test: overlapping elements, content spilling out of its box, horizontal page scroll, controls out of reach, small tap targets (touch), clipped text and broken images.
 
 ```sh
 npm install --save-dev @codepress/interactions-playwright
@@ -43,7 +43,7 @@ Options (all optional):
 | `theme` | the page's `prefers-color-scheme` | `"light"`, `"dark"` or `"unknown"` to record, for apps with their own theme toggle (Playwright's `colorScheme` / `page.emulateMedia` set the default) |
 | `ignoreFingerprints` | `[]` | fingerprints to leave out (known findings accepted for now) |
 | `events` | none | protocol v2 events to run the click and stability checks over too |
-| `checks` and thresholds | see [detect options](../browser/README.md#ui-checks) | |
+| `checks` and thresholds | see [detect options](https://github.com/quantfive/codepress-interactions/blob/main/packages/browser/README.md#ui-checks) | |
 
 Fingerprints are stable across scroll offsets, runs and machines: they hash the check, the route template, the viewport width band and the elements' identities, never coordinates.
 

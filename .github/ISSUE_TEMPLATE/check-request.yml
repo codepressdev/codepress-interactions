@@ -1,0 +1,22 @@
+name: Check request
+description: A UI problem the checks should find, or evidence a finding should carry
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem users see
+      description: What goes wrong on screen or when clicking, and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: A page that shows it
+      description: Minimal HTML and CSS, or a component.
+      render: html
+  - type: textarea
+    id: measurement
+    attributes:
+      label: How it could be measured
+      description: What in a snapshot (element boxes, flags, text boxes, hit tests) or in the click timeline tells it apart from intended layouts. Checks never read page text.

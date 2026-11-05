@@ -1,4 +1,4 @@
-export const VERSION = "0.3.0";
+export const VERSION = "1.0.0";
 
 export const numberOption = (
   value: number | undefined,
@@ -92,3 +92,44 @@ export async function gzip(text: string): Promise<Blob | null> {
 }
 
 export const now = (): number => performance.now();
+
+/**
+ * Bounded memory of keys already sent, by recency. A key seen again moves to
+ * the newest end; past `max`, the least recently seen key is forgotten, so an
+ * old one can be sent again only after it has gone unseen for a while. A key
+ * seen during the current run is never forgotten to make room: when every
+ * remembered key is that fresh (one run produced more than `max` keys), a new
+ * key is refused and waits for a later run instead of pushing out keys that
+ * would come straight back, which would resend everything on every run.
+ */
+export class RecentKeys {
+  private keys = new Map<string, number>();
+  private run = 0;
+
+  constructor(readonly max: number) {}
+
+  get size(): number {
+    return this.keys.size;
+  }
+
+  /** Starts a run: keys seen from here on are protected until the next one. */
+  beginRun(): void {
+    this.run++;
+  }
+
+  /** "seen": already remembered (now the newest); "new": remembered now; "full": refused for this run. */
+  admit(key: string): "seen" | "new" | "full" {
+    if (this.keys.has(key)) {
+      this.keys.delete(key);
+      this.keys.set(key, this.run);
+      return "seen";
+    }
+    if (this.keys.size >= this.max) {
+      const [oldest, run] = this.keys.entries().next().value!;
+      if (run === this.run) return "full";
+      this.keys.delete(oldest);
+    }
+    this.keys.set(key, this.run);
+    return "new";
+  }
+}

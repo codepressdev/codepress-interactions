@@ -56,7 +56,7 @@ importers:
   packages/react:
     dependencies:
       '@codepress/interactions-browser':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../browser
       react:
         specifier: '>=18'

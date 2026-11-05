@@ -1,0 +1,48 @@
+name: Bug report
+description: Something the SDK, a check or a helper does wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real user data, project keys or tokens. For a security or privacy problem, use "Report a vulnerability" on the Security tab instead of an issue.
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - "@codepress/interactions-browser"
+        - "@codepress/interactions-react"
+        - "@codepress/interactions-playwright"
+        - Python SDK
+        - Example or skill
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version and browser
+      placeholder: "1.0.0, Chrome 140 on macOS"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Page that reproduces it
+      description: Minimal HTML and CSS, a small component, or a link to a repository.
+      render: html
+    validations:
+      required: true
+  - type: textarea
+    id: reported
+    attributes:
+      label: What was reported
+      description: The finding line (from formatFinding or expectNoFindings), the events, or the error.
+      render: text
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: For a wrong or missing finding, say what is on screen.
+    validations:
+      required: true
