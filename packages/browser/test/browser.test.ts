@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initInteractions, type InteractionHandle } from "../src/index";
+import { RecentKeys } from "../src/util";
 let handles: InteractionHandle[] = [];
 let sent: { input: RequestInfo | URL; init?: RequestInit }[];
 let transport: ReturnType<typeof vi.fn>;
@@ -436,4 +437,42 @@ it("uses bounded tag ancestry without scanning a large sibling collection", asyn
   const action = events().find((event) => event.type === "interaction.started");
   expect(action.data.control_id).toBe("body/button");
   expect(action.data.control_id.split("/").length).toBeLessThanOrEqual(5);
+});
+
+describe("finding fingerprint memory", () => {
+  const run = (keys: RecentKeys, list: string[]) => {
+    keys.beginRun();
+    return list.filter((key) => keys.admit(key) === "new");
+  };
+  const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `f${from + i}`);
+
+  it("sends each key once while it keeps recurring, past the limit", () => {
+    const keys = new RecentKeys(2000);
+    // A long session: one screen's 300 findings recur on every run while
+    // other screens add new ones, far past 2000 in total.
+    const hot = range(0, 300);
+    expect(run(keys, hot)).toHaveLength(300);
+    for (let screen = 1; screen <= 20; screen++) {
+      const fresh = range(screen * 1000, screen * 1000 + 200);
+      expect(run(keys, [...hot, ...fresh])).toEqual(fresh);
+    }
+    expect(keys.size).toBe(2000);
+  });
+
+  it("forgets the least recently seen keys, which can then be sent again", () => {
+    const keys = new RecentKeys(3);
+    expect(run(keys, ["a", "b", "c"])).toEqual(["a", "b", "c"]);
+    expect(run(keys, ["a"])).toEqual([]); // a is now the newest
+    expect(run(keys, ["d"])).toEqual(["d"]); // b, the least recently seen, is forgotten
+    expect(run(keys, ["a", "c", "d"])).toEqual([]);
+    expect(run(keys, ["b"])).toEqual(["b"]);
+  });
+
+  it("one run with more keys than the limit sends the limit once and does not resend on later runs", () => {
+    const keys = new RecentKeys(2000);
+    const screen = range(0, 2500);
+    expect(run(keys, screen)).toHaveLength(2000);
+    for (let i = 0; i < 5; i++) expect(run(keys, screen)).toEqual([]);
+    // The FIFO it replaces resent all 2500 on every run.
+  });
 });

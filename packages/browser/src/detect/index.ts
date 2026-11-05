@@ -66,9 +66,11 @@ export function detect(
  * 0: a control's hit test is blocked;
  * 1: text is covered or clipped;
  * 2: everything else;
- * 3: decorative: an element in the finding is a decorative layer (no text, no
- *    control, and `pointer-events: none` or `aria-hidden`), or none of its
- *    elements holds text or a control (image stacks, cropped images).
+ * 3: decorative or empty: an element in the finding is a decorative layer (no
+ *    text, no control, and `pointer-events: none` or `aria-hidden`), none of
+ *    its elements holds text or a control (image stacks, cropped images), or
+ *    an overlap covers none of the subject's content (a fixed header over the
+ *    top padding of `<main>`).
  * Earlier tiers win: a decorative layer that covers text is tier 1.
  */
 export function findingTier(finding: Pick<Finding, "evidence">): 0 | 1 | 2 | 3 {
@@ -77,14 +79,33 @@ export function findingTier(finding: Pick<Finding, "evidence">): 0 | 1 | 2 | 3 {
     if (key.endsWith("blocked_points") && typeof value === "number" && value > 0) return 0;
   if (evidence.subject_text_covered === true || evidence.text_clipped === true) return 1;
   if (evidence.subject_decorative === true || evidence.other_decorative === true) return 3;
+  if (evidence.subject_content_covered === false) return 3;
   const sides = ["subject_has_content", "other_has_content"].filter((key) => key in evidence);
   if (sides.length > 0 && sides.every((key) => evidence[key] === false)) return 3;
   return 2;
 }
 
+/** Checks whose subject is always a control. */
+const CONTROL_CHECKS = new Set<string>(["offscreen_control", "small_tap_target"]);
+
+/**
+ * The finding is about a control: one of its elements is a control (a button,
+ * link, field or control role), or it is a click finding on one.
+ */
+export function involvesControl(finding: Pick<Finding, "type" | "evidence" | "control_id">): boolean {
+  const evidence = finding.evidence ?? {};
+  return (
+    CONTROL_CHECKS.has(finding.type) ||
+    evidence.subject_interactive === true ||
+    evidence.other_interactive === true ||
+    (typeof finding.control_id === "string" && finding.control_id !== "")
+  );
+}
+
 /**
  * Default order: blocked controls first, then covered text, then the rest, then
- * decorative findings (see `findingTier`); within a tier by check (in
+ * decorative findings (see `findingTier`). Inside "the rest", findings that
+ * involve a control come first (see `involvesControl`). Then by check (in
  * `CHECK_NAMES` order), then as found. Never drops a finding.
  */
 export function sortFindings<T extends Finding>(findings: readonly T[]): T[] {
@@ -93,8 +114,11 @@ export function sortFindings<T extends Finding>(findings: readonly T[]): T[] {
     return index < 0 ? CHECK_NAMES.length : index;
   };
   return findings
-    .map((finding, index) => ({ finding, index, tier: findingTier(finding), check: order(finding) }))
-    .sort((a, b) => a.tier - b.tier || a.check - b.check || a.index - b.index)
+    .map((finding, index) => {
+      const tier = findingTier(finding);
+      return { finding, index, tier, control: tier === 2 && !involvesControl(finding) ? 1 : 0, check: order(finding) };
+    })
+    .sort((a, b) => a.tier - b.tier || a.control - b.control || a.check - b.check || a.index - b.index)
     .map((entry) => entry.finding);
 }
 

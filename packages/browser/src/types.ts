@@ -197,6 +197,8 @@ export interface ClickSettledData {
   field_focused?: boolean;
   /** The click opened a new tab or window (link target, modifier key, download or window.open). */
   new_context?: boolean;
+  /** The click changed the text selection or moved the caret (1.0.0). */
+  selection_changed?: boolean;
   overlapped: boolean;
   incomplete: boolean;
   end_reason: ClickEndReason;

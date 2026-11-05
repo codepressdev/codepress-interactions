@@ -100,6 +100,7 @@ const ClickData = {
     value_changed: { type: "boolean", description: "An input or change event fired on the clicked field (checkbox, radio, select). Absent before 0.3.0." },
     field_focused: { type: "boolean", description: "The click put focus in a text field, select or editable region; the caret or picker is its effect. Absent before 0.3.0." },
     new_context: { type: "boolean", description: "The click opened a new tab or window (link target, modifier key, download or window.open). Absent before 0.3.0." },
+    selection_changed: { type: "boolean", description: "The click changed the text selection or moved the caret (a selectionchange from its own press or while it was open), for example selecting a word with a double-click. rage_click counts it as an answer. Absent before 1.0.0." },
     overlapped: { type: "boolean", description: "Another click started before this one settled (on both clicks). Counts are never shared between them." },
     incomplete: { type: "boolean", description: "The window ended by timeout or by the page being hidden/unloaded." },
     end_reason: { type: "string", enum: ["settled", "overlapped", "timeout", "page_hidden"] },

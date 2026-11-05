@@ -37,6 +37,13 @@ const count = (value: unknown): number => (typeof value === "number" && Number.i
 const numOrNull = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 const str = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
+/**
+ * A click the page answered, for rage: visible feedback, a caret in a focused
+ * text field, or a changed text selection. Focus and selection are not feedback
+ * for the other checks.
+ */
+const answeredClick = (d: Record<string, unknown>): boolean =>
+  d.first_feedback_ms !== null || d.field_focused === true || d.selection_changed === true;
 /** Control IDs without a test ID are tag paths (`main/form/button`). */
 const structural = (controlId: string): boolean => controlId.includes("/");
 
@@ -220,9 +227,10 @@ export function timelineFindings(
         if (burst.length >= options.rageClickCount) {
           const data = burst.map((start) => (start.id ? settled.get(start.id) : undefined));
           const known = data.filter((d): d is Record<string, unknown> => !!d);
-          const answered = known.filter((d) => d.first_feedback_ms !== null).length;
+          const answered = known.filter(answeredClick).length;
           // Rage is clicking again because nothing answered. A burst where every
-          // click visibly answered (a stepper, a toggle) is not that; one still
+          // click visibly answered (a stepper, a toggle, a caret in a text field,
+          // a double- or triple-click selecting text) is not that; one still
           // settling is decided on a later run. No settled data at all (events
           // without click follow-through) cannot say, so it is reported.
           if (known.length && answered === known.length) {

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { checkEvents, checkSnapshot, fingerprint, type Finding } from "../../src/detect/index";
+import { checkEvents, checkSnapshot, findingTier, fingerprint, type Finding } from "../../src/detect/index";
 import { APP, events, expectValid, init, openPage, output, rowOf, type Output } from "./harness";
 
 // The test viewport is 1280 wide: the default band is 1024-1439.
@@ -812,4 +812,87 @@ test("decorative layers and image crops carry content evidence and sort after co
       label(f),
     ).toBe(true);
   expect(order).toContain("spill art hero");
+});
+
+// ---- 1.0.0: text fields, form owners, padded headers ---------------------------
+
+test("rage_click: repeated clicks and a triple-click in one text field of a form are not rage; a dead button still is", async ({ page }) => {
+  await openPage(
+    page,
+    `<form data-testid="profile">
+       <input data-testid="city" value="San Francisco, California" style="width:300px">
+       <p data-testid="hint">Use the city you live in now, not where you were born.</p>
+     </form>
+     <button data-testid="dead">Nothing</button>`,
+  );
+  await init(page, { clickSettleMs: 200 });
+  await page.evaluate(() => (window as any).handle.snapshot());
+  // Three separate clicks in the field, a real triple-click selecting its text,
+  // and a triple-click selecting the paragraph's text.
+  for (let i = 0; i < 3; i++) await page.click('[data-testid="city"]', { delay: 0 });
+  await expect.poll(() => settledCount(page)).toBeGreaterThanOrEqual(1);
+  await page.waitForTimeout(1200);
+  await page.click('[data-testid="city"]', { clickCount: 3 });
+  await page.waitForTimeout(1200);
+  await page.click('[data-testid="hint"]', { clickCount: 3 });
+  expect(await page.evaluate(() => getSelection()!.toString())).toContain("Use the city");
+  await page.waitForTimeout(1200);
+  // A button that does nothing, clicked three times: rage.
+  for (let i = 0; i < 3; i++) await page.click('[data-testid="dead"]', { delay: 0 });
+  await page.waitForTimeout(800);
+  await idle(page);
+  await page.evaluate(() => (window as any).handle.flush());
+  await idle(page);
+  const out = await output(page);
+  expectValid(out);
+  const settledFor = (id: string) => events(out).filter((e) => e.type === "ui.click.settled" && e.data.control_id === id);
+  // Each field click put the caret in the focused field; the paragraph's presses changed the selection.
+  expect(settledFor("profile").length).toBeGreaterThanOrEqual(3);
+  for (const e of settledFor("profile")) expect(e.data.field_focused || e.data.selection_changed).toBe(true);
+  const rage = checkEvents(events(out)).filter((f) => f.type === "rage_click");
+  expect(rage.map((f) => f.control_id)).toEqual(["dead"]);
+  expect(findingsOf(out).filter((e) => e.data.check === "click.rage_click").map((e) => e.data.control_id)).toEqual(["dead"]);
+});
+
+test("a label click on a field joined to another form with the form attribute is one start, on the field's form", async ({ page }) => {
+  // The label sits in form A; its field joins form B through form="b", wherever it is in the DOM.
+  const shapes = [
+    `<form id="a" data-testid="A"><label for="x" data-testid="L">Opt in</label></form><input type="checkbox" id="x" form="b" data-testid="X"><form id="b" data-testid="B"></form>`,
+    `<form id="a" data-testid="A"><label for="x" data-testid="L">Opt in</label><input type="checkbox" id="x" form="b" data-testid="X"></form><form id="b" data-testid="B"></form>`,
+    `<form id="a" data-testid="A"><label data-testid="L">Opt in <input type="checkbox" form="b" data-testid="X"></label></form><form id="b" data-testid="B"></form>`,
+    `<form id="a" data-testid="A"><label for="x" data-testid="L">City</label></form><div><input id="x" form="b" data-testid="X"></div><form id="b" data-testid="B"></form>`,
+  ];
+  for (const html of shapes) {
+    await page.unrouteAll();
+    await openPage(page, html);
+    await init(page, { snapshots: false, clickSettleMs: 200 });
+    await page.click('[data-testid="L"]');
+    // The field's own click goes to the same form.
+    await page.waitForTimeout(400);
+    await page.click('[data-testid="X"]');
+    await page.waitForTimeout(400);
+    const starts = events(await output(page)).filter((e) => e.type === "interaction.started");
+    expect(starts.map((e) => e.data.control_id), html).toEqual(["B", "B"]);
+  }
+});
+
+test("a fixed header over a padded main is reported, with no content covered, and sorts as empty", async ({ page }) => {
+  const header = `<header data-testid="header" style="position:fixed;top:0;left:0;right:0;height:64px;background:#fff;z-index:10"><a href="/" data-testid="home">Home</a></header>`;
+  const padded = await scan(
+    page,
+    `${header}<main data-testid="main" style="padding-top:64px"><h1 data-testid="title" style="margin:8px 16px">Orders</h1><button data-testid="save">Save</button></main>`,
+  );
+  expectSame(padded);
+  const overlaps = padded.node.filter((f) => f.type === "overlap");
+  expect(overlaps.map((f) => `${f.subject?.test_id} ${f.other?.test_id}`)).toEqual(["main header"]);
+  expect(overlaps[0].evidence).toMatchObject({ subject_blocked_points: 0, subject_text_covered: false, subject_content_covered: false });
+  expect(findingTier(overlaps[0])).toBe(3);
+  // The same header over a heading that starts under it covers content.
+  const tight = await scan(
+    page,
+    `${header}<main data-testid="main"><h1 data-testid="title" style="margin:8px 16px">Orders</h1></main>`,
+  );
+  const [covering] = tight.node.filter((f) => f.type === "overlap");
+  expect(covering.evidence).toMatchObject({ subject_content_covered: true, subject_text_covered: true });
+  expect(findingTier(covering)).toBe(1);
 });

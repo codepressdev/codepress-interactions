@@ -1,6 +1,6 @@
 {
   "name": "@codepress/interactions-react",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Optional React lifecycle adapter for interaction evidence",
   "license": "Apache-2.0",
   "type": "module",
@@ -28,14 +28,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@codepress/interactions-browser": "workspace:*"
+    "@codepress/interactions-browser": "workspace:^"
   },
   "peerDependencies": {
     "react": ">=18"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/quantfive/codepress-interactions.git",
+    "url": "git+https://github.com/quantfive/codepress-interactions.git",
     "directory": "packages/react"
   },
   "publishConfig": {

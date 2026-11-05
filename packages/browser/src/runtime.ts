@@ -45,13 +45,14 @@ import {
   safeTraceId,
   sha256Hex,
   validInteractionId,
+  RecentKeys,
 } from "./util";
 
 const ATTRIBUTION = "explicit synchronous runAction only" as const;
 const CONTROLS = "button,a,form,input[type=submit],[role=button]";
 const MAX_SENT_HASHES = 1000;
 const MAX_PENDING_SNAPSHOTS = 4;
-/** Fingerprints remembered per page session; past this the oldest may be sent again. */
+/** Fingerprints remembered per page session; past this the least recently seen may be sent again. */
 const MAX_FINDINGS = 2000;
 /** Events kept for the click and stability checks. */
 const MAX_TIMELINE = 500;
@@ -63,6 +64,21 @@ const TARGETS = `${INTERACTIVE},label`;
  */
 const LABEL_INTERACTIVE =
   "a[href],button,input:not([type=hidden]),select,textarea,label,details,embed,iframe,img[usemap],audio[controls],video[controls]";
+/** Form-associated fields whose form owner can differ from their DOM ancestor form (the `form` attribute). */
+const FORM_FIELDS = "input,select,textarea,button";
+
+/**
+ * The tracked control a click on `element` belongs to: the nearest control
+ * above it, except that a field joined to a form with the `form` attribute
+ * belongs to that form, wherever it sits in the DOM.
+ */
+function controlOf(element: Element | null): Element | null {
+  if (!element) return null;
+  const found = element.closest(CONTROLS);
+  if (found && found.tagName !== "FORM") return found;
+  const owner = element.matches(FORM_FIELDS) ? (element as HTMLInputElement).form : null;
+  return owner ?? found;
+}
 const TIMELINE_TYPES = new Set(["interaction.started", "ui.click.settled", "ui.state.changed", "perf.summary", "ui.snapshot"]);
 
 type EventData = EvidenceEvent["data"];
@@ -128,7 +144,7 @@ export class Runtime {
   private walks = 0;
   // Findings
   private findingsEnabled: boolean;
-  private sentFindings = new Set<string>();
+  private sentFindings = new RecentKeys(MAX_FINDINGS);
   private timeline: TimelineEvent[] = [];
   private timelineScheduled = false;
   /** Per page session: the clicked element's opaque key, so rage clicks group by element. */
@@ -361,7 +377,11 @@ export class Runtime {
         )
           forwarded = null;
       }
-      const target = (forwarded ? forwarded.closest(CONTROLS) : null) ?? (clicked ? clicked.closest(CONTROLS) : null);
+      // A label click belongs to its field's control (a field can join another
+      // form through the `form` attribute); only a field with none falls back
+      // to the label's own control.
+      const fieldControl = forwarded ? controlOf(forwarded) : null;
+      const target = fieldControl ?? controlOf(clicked);
       if (
         !target ||
         !this.root.contains(target) ||
@@ -389,7 +409,7 @@ export class Runtime {
           : {}),
       });
       if (event.type === "click") this.clicks?.begin(id, controlId, target, event);
-      if (forwarded && forwarded.closest(CONTROLS) === target) {
+      if (forwarded && fieldControl) {
         // Skip the click the browser is about to forward to the field.
         const field = forwarded;
         labelControl = field;
@@ -735,13 +755,13 @@ export class Runtime {
    * with the right width band and fingerprint.
    */
   private emitFindings(findings: Finding[], defer = false): void {
+    this.sentFindings.beginRun();
     for (const finding of findings) {
       if (!this.active) return;
       if (defer && !(finding.viewport_width > 0)) continue;
-      if (this.sentFindings.has(finding.fingerprint)) continue;
-      if (this.sentFindings.size >= MAX_FINDINGS)
-        this.sentFindings.delete(this.sentFindings.values().next().value!);
-      this.sentFindings.add(finding.fingerprint);
+      // Seen again: refreshed, not resent. Full: more new findings in one run
+      // than the memory holds; this one waits for a later run.
+      if (this.sentFindings.admit(finding.fingerprint) !== "new") continue;
       this.record(
         "ui.finding",
         finding.interaction_id,

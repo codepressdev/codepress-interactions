@@ -57,6 +57,8 @@ interface ClickWindow {
   valueChanged: boolean;
   fieldFocused: boolean;
   newContext: boolean;
+  /** The click's own press, or the click while open, changed the text selection or caret. */
+  selectionChanged: boolean;
   /** A later pointer or key input happened while this click was open. */
   laterInput: boolean;
   quiet?: ReturnType<typeof setTimeout>;
@@ -81,6 +83,8 @@ export class ClickEffects {
   private active = false;
   /** Settled clicks whose after-snapshot is still being taken. */
   private awaitingAfter = new Set<() => void>();
+  /** The text selection just before the last pointer press's default action. */
+  private pressSelection: SelectionMark | null = null;
 
   constructor(private host: ClickHost) {}
 
@@ -132,10 +136,21 @@ export class ClickEffects {
       click.valueChanged = true;
       this.effect(click, true);
     };
-    const onInput = () => {
+    const onInput = (event: Event) => {
+      if (event.type === "pointerdown" || event.type === "mousedown") this.pressSelection = selectionMark();
       const click = this.current;
       if (click) click.laterInput = true;
     };
+    // A press places the caret or selects a word or line in its default
+    // action, before its click event; `begin` compares the selection with the
+    // one before the press (selectionchange events are coalesced and arrive
+    // late). A change while the click is open (the page selecting text) counts too.
+    const onSelection = () => {
+      const click = this.current;
+      if (click && !click.laterInput) click.selectionChanged = true;
+    };
+    document.addEventListener("selectionchange", onSelection, true);
+    this.removals.push(() => document.removeEventListener("selectionchange", onSelection, true));
     for (const type of USER_INPUT) {
       document.addEventListener(type, onInput, { capture: true, passive: true });
       this.removals.push(() => document.removeEventListener(type, onInput, { capture: true }));
@@ -200,6 +215,11 @@ export class ClickEffects {
       valueChanged: false,
       fieldFocused: false,
       newContext: false,
+      // A mouse click (detail > 0) whose own press changed the selection.
+      selectionChanged:
+        ((event as MouseEvent | undefined)?.detail ?? 0) > 0 &&
+        !!this.pressSelection &&
+        !sameSelection(this.pressSelection, selectionMark()),
       laterInput: false,
     };
     try {
@@ -335,6 +355,7 @@ export class ClickEffects {
       value_changed: click.valueChanged,
       field_focused: click.fieldFocused,
       new_context: click.newContext,
+      selection_changed: click.selectionChanged,
       overlapped: click.overlapped || reason === "overlapped",
       incomplete: reason === "timeout" || reason === "page_hidden",
       end_reason: reason,
@@ -364,6 +385,32 @@ export class ClickEffects {
 }
 
 const isField = (node: Node): node is Element => node instanceof Element && node.matches(FIELD);
+
+/** Where the selection is: node references and offsets only, never its text. */
+interface SelectionMark {
+  anchor: Node | null;
+  anchorOffset: number;
+  focus: Node | null;
+  focusOffset: number;
+}
+
+function selectionMark(): SelectionMark | null {
+  try {
+    const selection = document.getSelection();
+    if (!selection) return null;
+    return {
+      anchor: selection.anchorNode,
+      anchorOffset: selection.anchorOffset,
+      focus: selection.focusNode,
+      focusOffset: selection.focusOffset,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const sameSelection = (a: SelectionMark, b: SelectionMark | null): boolean =>
+  !!b && a.anchor === b.anchor && a.anchorOffset === b.anchorOffset && a.focus === b.focus && a.focusOffset === b.focusOffset;
 
 /** Records what was clicked: the nearest control, a label's field, and browser-handled effects. */
 function describeTarget(click: ClickWindow, event: Event | undefined, root: Element): void {

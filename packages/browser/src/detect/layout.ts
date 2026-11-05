@@ -205,6 +205,29 @@ function textOverlap(view: SnapshotView, row: number, rect: Rect, min: number): 
   return { px: r2(px), covered };
 }
 
+/** Tags whose box is content a person looks at, though it holds no text. */
+const MEDIA_TAGS = new Set(["img", "svg", "picture", "video", "canvas", "iframe", "embed", "object"]);
+
+/**
+ * Whether anything of `row`'s subtree that a person reads, uses or looks at
+ * lies under `rect`: a text box, a control, an image or an opaque box. False
+ * when the overlap covers only empty area (padding, a background), for example
+ * a fixed header over the top padding of `<main>`.
+ */
+function contentUnder(view: SnapshotView, row: number, rect: Rect, min: number): boolean {
+  const crosses = (box: Rect) => {
+    const hit = intersect(box, rect);
+    return hit.right - hit.left > min && hit.bottom - hit.top > min;
+  };
+  for (let at = row; at <= view.end[row]; at++) {
+    if (!view.shown(at)) continue;
+    const thing = view.has(at, FLAGS.interactive) || view.has(at, FLAGS.opaque) || MEDIA_TAGS.has(view.tag(at));
+    if (thing && crosses(view.visible[at])) return true;
+    for (const box of view.textBoxes.get(at) ?? []) if (crosses(box)) return true;
+  }
+  return false;
+}
+
 function overlapFinding(ctx: Context, a: number, b: number): void {
   const { view, options } = ctx;
   const va = view.visible[a];
@@ -249,11 +272,14 @@ function overlapFinding(ctx: Context, a: number, b: number): void {
     subject_text_covered: subjectText ? subjectText.covered : null,
     subject_text_overlap_px: subjectText ? subjectText.px : null,
     subject_text_covered_ratio: subjectText && sc.textPx > 0 ? ratio(subjectText.px, sc.textPx) : null,
+    subject_content_covered: contentUnder(view, subject, vo, options.overlapMinPx),
     other_text_overlap_px: otherText ? otherText.px : null,
     paint_order_from_hit_test: fromHitTest,
     subject_overlay: view.has(subject, FLAGS.overlay),
     other_overlay: view.has(other, FLAGS.overlay),
     other_pointer_events_none: view.has(other, FLAGS.pointer_events_none),
+    subject_interactive: view.has(subject, FLAGS.interactive),
+    other_interactive: view.has(other, FLAGS.interactive),
     subject_has_content: contentOf(sc),
     other_has_content: contentOf(oc),
     subject_decorative: sc.decorative,
