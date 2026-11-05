@@ -55,15 +55,12 @@ npm test
 ```
 
 `tests/ui.spec.ts` opens the page at 1280x720 and calls `expectNoFindings(page)`.
-It fails, listing the finding:
-
-```
-Error: 1 UI finding on /. Pass a fingerprint in ignoreFingerprints to accept one.
-  "layout.overlap plan-pro-cta × plan-pro-badge on / @1280x720: ... subject_blocked_points=2 ... [<fingerprint>]"
-```
+It fails, with a message that starts `Error: 1 UI finding on /.` and lists the
+finding line and its fingerprint.
 
 Playwright starts the dev server itself, or reuses the one from `npm run dev`
-if it is running (then the test's page view lands in `.interactions/` too).
+if it is running. The test closes the page before the SDK's first flush, so it
+adds nothing to `.interactions/`; load the page in a browser for that.
 
 ## Let an agent fix it
 

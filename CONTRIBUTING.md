@@ -18,14 +18,14 @@ Do not open a public issue. Use **Report a vulnerability** on the repository's S
 
 ## Setting up
 
-You need Node.js 20 or later and pnpm 10 (`corepack enable` gives you the pinned version).
+You need Node.js 20.19 or later (or 22.12 or later) and pnpm 10 (`corepack enable` gives you the pinned version).
 
 ```sh
 pnpm install
+pnpm build                                  # the React and Playwright packages typecheck and test against the browser package's build
 pnpm typecheck
 pnpm test                                   # unit tests (Vitest, jsdom and Node)
 pnpm --filter @codepress/interactions-browser exec playwright install chromium
-pnpm build                                  # the Playwright helpers test against the browser package's build
 pnpm test:browser                           # real-browser tests (Chromium)
 ```
 
@@ -47,9 +47,9 @@ The three npm packages share one version. To release:
 
 1. Bump `version` in `packages/browser/package.json`, `packages/react/package.json` and `packages/playwright/package.json`, and `VERSION` in `packages/browser/src/util.ts`; regenerate the golden samples (they record `sdk_version`).
 2. Move the "Unreleased" changelog entries under the new version.
-3. Merge to `main`. The publish workflows (`.github/workflows/publish-*.yml`) publish each version npm does not have yet, with provenance, through npm Trusted Publishing. No npm token is stored in the repository. The browser package goes first; the React and Playwright packages depend on it.
+3. Merge to `main`. The publish workflows (`.github/workflows/publish-*.yml`) publish each version npm does not have yet, with provenance, through npm Trusted Publishing. No npm token is stored in the repository. The browser package goes first; the React and Playwright workflows do not publish until npm has the browser version they build against, so if they ran first they warn and skip, and you re-run them once the browser package is out.
 
-A package that does not exist on npm yet is skipped with a notice: its first version is published once by hand by an owner of the `@codepress` npm scope, who then adds the workflow as the package's trusted publisher.
+A package that does not exist on npm yet is skipped with a warning in the workflow run: its first version is published once by hand by an owner of the `@codepress` npm scope, who then adds the workflow as the package's trusted publisher.
 
 ## License
 

@@ -118,8 +118,17 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
           elif [ "$RELEASE" = "true" ]; then
-            echo "published=false" >> "$GITHUB_OUTPUT"
-            echo "publish=true" >> "$GITHUB_OUTPUT"
+            # The tarball depends on the browser package's version range; do not
+            # publish until npm has the browser version this checkout builds against.
+            BROWSER_VERSION=$(node -p "require('../browser/package.json').version")
+            if [ -z "$(npm view "@codepress/interactions-browser@$BROWSER_VERSION" version 2>/dev/null)" ]; then
+              echo "::warning::@codepress/interactions-browser@$BROWSER_VERSION is not on npm yet, so this run does not publish $PACKAGE@$VERSION. Publish the browser package first (publish-browser.yml), then re-run this workflow with dry_run off."
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
