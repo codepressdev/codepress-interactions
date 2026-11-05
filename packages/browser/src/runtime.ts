@@ -321,9 +321,10 @@ export class Runtime {
     this.removals.push(() => this.clicks?.stop());
 
     // A click on a <label> makes the browser click its field in the same task.
-    // When the label click was recorded against the same control, that second
-    // click is the label's doing, not another user click. Any real input (a
-    // pointer or key press) ends the window, so a user's next click always counts.
+    // The label click is recorded as a click on the field's control, and that
+    // second click is skipped: one user click, one start, on the control it
+    // operates. Any real input (a pointer or key press) ends the window, so a
+    // user's next click always counts.
     let labelControl: Element | null = null;
     const endLabelWindow = () => {
       labelControl = null;
@@ -335,15 +336,26 @@ export class Runtime {
     const control = (event: Event) => {
       const clicked = event.target instanceof Element ? event.target : null;
       let forwarded: Element | null = null;
+      let label: Element | null = null;
       if (event.type === "click" && clicked) {
         if (labelControl && clicked === labelControl) {
           labelControl = null;
           return;
         }
-        forwarded = (clicked.closest("label") as HTMLLabelElement | null)?.control ?? null;
-        if (forwarded?.contains(clicked)) forwarded = null;
+        label = clicked.closest("label");
+        forwarded = (label as HTMLLabelElement | null)?.control ?? null;
+        // The browser forwards nothing for a click on the field itself, on other
+        // interactive content inside the label (a link), or to a disabled field.
+        const inner = clicked.closest(INTERACTIVE);
+        if (
+          forwarded &&
+          (forwarded.contains(clicked) ||
+            (inner && inner !== label && label!.contains(inner)) ||
+            forwarded.matches(":disabled"))
+        )
+          forwarded = null;
       }
-      const target = clicked ? clicked.closest(CONTROLS) : null;
+      const target = (forwarded ? forwarded.closest(CONTROLS) : null) ?? (clicked ? clicked.closest(CONTROLS) : null);
       if (
         !target ||
         !this.root.contains(target) ||
@@ -366,10 +378,13 @@ export class Runtime {
       this.record("interaction.started", id, {
         action: event.type,
         control_id: controlId,
-        ...(event.type === "click" && clicked ? { target_key: this.targetKey(target, clicked) } : {}),
+        ...(event.type === "click" && clicked
+          ? { target_key: this.targetKey(target, forwarded && label ? label : clicked) }
+          : {}),
       });
       if (event.type === "click") this.clicks?.begin(id, controlId, target, event);
       if (forwarded && forwarded.closest(CONTROLS) === target) {
+        // Skip the click the browser is about to forward to the field.
         const field = forwarded;
         labelControl = field;
         setTimeout(() => {
@@ -693,7 +708,8 @@ export class Runtime {
    */
   private targetKey(control: Element, clicked: Element): number {
     let element = clicked.closest(TARGETS);
-    if (!element || !control.contains(element)) element = clicked;
+    // A label outside its field's control keys as the label itself.
+    if (!element || !(control.contains(element) || element === clicked)) element = clicked;
     let key = this.targetKeys.get(element);
     if (key === undefined) {
       // Keys only need to differ within a rage window, so wrapping is harmless.

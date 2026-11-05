@@ -296,6 +296,11 @@ const CLICKS = `
 </form>
 <label for="go" data-testid="go-label">Go</label> <button id="go" data-testid="go">Go</button>
 <label><button data-testid="wrapped">Wrapped</button> wrapped label text</label>
+<form data-testid="termsform">
+  <button type="button" role="checkbox" aria-checked="false" id="terms" data-testid="terms">✓</button>
+  <label for="terms" data-testid="terms-label">I accept the terms</label>
+  <label for="termsnote">Note <a href="#help" data-testid="help-link">help</a></label> <input id="termsnote" data-testid="termsnote">
+</form>
 <form data-testid="busyform">
   <label for="busyfield" id="busylabel" data-testid="busy-label">Busy label</label><br><br><input id="busyfield" data-testid="busyfield">
 </form>
@@ -311,6 +316,10 @@ const CLICKS = `
   });
   $("fail").addEventListener("click", () => fetch("/api/fail"));
   $("throw").addEventListener("click", () => { throw new Error("boom"); });
+  $("terms").addEventListener("click", () => {
+    const box = $("terms");
+    box.setAttribute("aria-checked", box.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
   $("busylabel").addEventListener("click", (event) => {
     event.preventDefault();
     const until = performance.now() + 400;
@@ -444,6 +453,34 @@ test("a label outside any tracked control still records its field's click", asyn
   expect(starts.map((e) => e.data.control_id)).toEqual(["go", "wrapped"]);
   const dead = findingsOf(out).filter((e) => e.data.check === "click.dead_click").map((e) => e.data.control_id);
   expect(dead.sort()).toEqual(["go", "wrapped"]);
+});
+
+test("a label for a button-type field in a form is one click on that field, and not rage", async ({ page }) => {
+  await clickPage(page);
+  const starts = async () =>
+    events(await output(page)).filter((e) => e.type === "interaction.started" && e.data.action === "click");
+  // shadcn/Radix-style checkbox: a <button role="checkbox"> with a <label for>.
+  await clickAndSettle(page, '[data-testid="terms-label"]');
+  expect((await starts()).map((e) => e.data.control_id)).toEqual(["terms"]);
+  for (let i = 0; i < 2; i++) {
+    await page.waitForTimeout(300);
+    await page.click('[data-testid="terms-label"]');
+  }
+  await expect.poll(async () => (await starts()).length).toBe(3);
+  expect(await page.getAttribute('[data-testid="terms"]', "aria-checked")).toBe("true");
+  // A link inside a label is its own click; the browser forwards nothing.
+  await clickAndSettle(page, '[data-testid="help-link"]');
+  await clickAndSettle(page, '[data-testid="termsnote"]');
+  await idle(page);
+  await page.evaluate(() => (window as any).handle.flush());
+  await idle(page);
+  const out = await output(page);
+  expectValid(out);
+  expect((await starts()).map((e) => e.data.control_id)).toEqual(["terms", "terms", "terms", "help-link", "termsform"]);
+  const settled = events(out).filter((e) => e.type === "ui.click.settled").slice(0, 3);
+  for (const s of settled) expect(s.data.first_feedback_ms).not.toBeNull();
+  expect(checkEvents(events(out)).filter((f) => f.type === "rage_click")).toEqual([]);
+  expect(findingsOf(out).filter((e) => e.data.check === "click.rage_click")).toEqual([]);
 });
 
 test("a real click right after a slow label click is not taken for the label's forwarded click", async ({ page }) => {
