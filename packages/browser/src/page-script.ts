@@ -15,6 +15,8 @@ export interface PageWalkOptions {
   /** Route template to record. Default: the default template of the current URL with `routeSegments`. */
   routeTemplate?: string | null;
   routeSegments?: string[];
+  /** Theme to record. Default: prefers-color-scheme (Playwright's `colorScheme` / `emulateMedia`). */
+  theme?: string;
 }
 
 async function walk(options: PageWalkOptions = {}) {
@@ -32,6 +34,7 @@ async function walk(options: PageWalkOptions = {}) {
     ignoreSelector: options.ignoreSelector ?? "",
     routeTemplate: route,
     shouldAbort: () => false,
+    theme: options.theme === undefined ? undefined : () => options.theme,
   });
   if (!result) throw new Error("snapshot walk was abandoned");
   return result.body;

@@ -9,7 +9,8 @@
     "device_pixel_ratio": 1,
     "scroll_x": 0,
     "scroll_y": 0,
-    "coarse_pointer": false
+    "coarse_pointer": false,
+    "theme": "light"
   },
   "document": {
     "width": 800,
@@ -39,7 +40,8 @@
       "in_shadow": 512,
       "popover_open": 1024,
       "ellipsis": 2048,
-      "broken_image": 4096
+      "broken_image": 4096,
+      "aria_hidden": 8192
     },
     "hit_points": [
       "center",

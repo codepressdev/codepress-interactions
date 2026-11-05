@@ -187,6 +187,20 @@ describe("overlap", () => {
     // Layers do not overlap the page; they may still overlap each other... but never the page beneath.
     for (const f of overlaps) expect([f.subject?.test_id, f.other?.test_id]).not.toContain("under");
   });
+
+  it("reports a pinned element covering content at the page origin, but not once the page has scrolled", () => {
+    const els: El[] = [
+      { parent: -1, tag: "body", box: [0, 0, 1280, 3000] },
+      { parent: 0, tag: "button", box: [1100, 700, 120, 40], flags: V | I, testId: "buy", text: [1110, 710, 60, 20] },
+      { parent: 0, box: [1080, 680, 180, 100], position: "fixed", testId: "chat" },
+    ];
+    const hits = [{ row: 1, tested: 5, blocked: 5, points: 31, top: 2 }];
+    const atOrigin = checkSnapshot(body(els, { document: { width: 1280, height: 3000 }, hits }));
+    expect(atOrigin.filter((f) => f.type === "overlap").map((f) => `${f.subject?.test_id} ${f.other?.test_id}`)).toEqual(["buy chat"]);
+    const scrolled = body(els, { document: { width: 1280, height: 3000 }, hits });
+    scrolled.viewport.scroll_y = 400;
+    expect(checkSnapshot(scrolled).filter((f) => f.type === "overlap")).toEqual([]);
+  });
 });
 
 describe("torn and truncated snapshots", () => {
@@ -278,6 +292,61 @@ describe("sorting", () => {
     const sorted = sortFindings(input);
     expect(sorted).toHaveLength(input.length);
     expect(sorted).toEqual([input[3], input[5], input[2], input[1], input[0], input[4]]);
+  });
+
+  it("sorts decorative layers and content-free findings last, from measured evidence; nothing dropped", () => {
+    const f = (type: Finding["type"], evidence: Finding["evidence"]) => ({ type, evidence }) as Finding;
+    const input = [
+      f("spill", { subject_has_content: false, subject_decorative: false }),
+      f("overlap", { subject_has_content: false, other_has_content: false }),
+      f("overlap", { subject_has_content: true, other_has_content: false, other_decorative: true }),
+      f("small_tap_target", {}),
+      f("overlap", { subject_has_content: true, other_has_content: true }),
+      f("overlap", { subject_text_covered: true, other_decorative: true }),
+      f("spill", { subject_has_content: null }),
+    ];
+    const sorted = sortFindings(input);
+    expect(sorted).toHaveLength(input.length);
+    expect(sorted).toEqual([input[5], input[4], input[6], input[3], input[1], input[2], input[0]]);
+  });
+
+  it("records content and decoration as overlap and spill evidence", () => {
+    const b = body([
+      { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+      { parent: 0, tag: "section", box: [0, 0, 1280, 600], flags: V | FLAGS.clips_content, testId: "hero" },
+      { parent: 1, tag: "img", box: [-100, 0, 1480, 600], testId: "art" },
+      { parent: 1, box: [0, 0, 1280, 600], position: "absolute", flags: V | FLAGS.pointer_events_none, testId: "glow" },
+      { parent: 1, tag: "h1", box: [100, 100, 600, 80], testId: "title", text: [100, 110, 500, 60] },
+      { parent: 1, box: [900, 100, 200, 200], flags: V | FLAGS.aria_hidden, testId: "shape" },
+    ]);
+    const found = checkSnapshot(b);
+    const pair = (a: string, c: string) =>
+      found.find((x) => x.type === "overlap" && [x.subject?.test_id, x.other?.test_id].sort().join() === [a, c].sort().join());
+    const glowArt = pair("glow", "art")!;
+    expect(glowArt.evidence).toMatchObject({ subject_has_content: false, other_has_content: false });
+    expect([glowArt.evidence.subject_decorative, glowArt.evidence.other_decorative]).toContain(true);
+    // The heading paints over the image: the image is the covered subject, and no text is covered.
+    const title = pair("title", "art")!;
+    expect(title.subject?.test_id).toBe("art");
+    expect(title.evidence).toMatchObject({ subject_has_content: false, other_has_content: true, subject_text_covered: false, subject_decorative: false, other_decorative: false });
+    const shape = pair("shape", "art")!;
+    expect([shape.evidence.subject_decorative, shape.evidence.other_decorative]).toContain(true);
+    const crop = found.find((x) => x.type === "spill")!;
+    expect(crop.subject?.test_id).toBe("art");
+    expect(crop.evidence).toMatchObject({ subject_has_content: false, subject_decorative: false });
+    // The positioned glow paints over the heading's text: covered text wins over decoration.
+    const glowTitle = pair("glow", "title")!;
+    expect(glowTitle.subject?.test_id).toBe("title");
+    expect(glowTitle.evidence).toMatchObject({ subject_text_covered: true, other_decorative: true });
+    // Order: covered text, then text over the image, then decorative and content-free findings.
+    expect(found.map((x) => `${x.type} ${x.subject?.test_id} ${x.other?.test_id}`)).toEqual([
+      "overlap title glow",
+      "overlap art title",
+      "overlap art glow",
+      "overlap art shape",
+      "overlap shape glow",
+      "spill art hero",
+    ]);
   });
 });
 

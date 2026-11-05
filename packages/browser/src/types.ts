@@ -1,4 +1,5 @@
 import type { DetectOptions, FindingData } from "./detect/types";
+import type { Theme } from "./format";
 import type { InteractionSink } from "./sink";
 import type { SnapshotSummary } from "./snapshot";
 
@@ -68,6 +69,12 @@ export interface InteractionOptions {
   findings?: boolean;
   /** Check thresholds (see `@codepress/interactions-browser/detect`). */
   detect?: Omit<DetectOptions, "now">;
+  /**
+   * The theme actually showing, for apps with their own theme toggle; read at
+   * every snapshot. Anything other than "light", "dark" or "unknown" (or a throw)
+   * is recorded as "unknown". Default: the user's `prefers-color-scheme`.
+   */
+  theme?: () => Theme;
 }
 
 export interface Diagnostics {
@@ -155,6 +162,8 @@ export interface SnapshotEventData {
   walk_ms: number;
   slices: number;
   max_slice_ms: number;
+  /** Color scheme on screen, as in the body's `viewport.theme`. Absent before 0.3.0. */
+  theme?: Theme;
 }
 
 export type ClickEndReason =

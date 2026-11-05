@@ -90,3 +90,12 @@ test("route and thresholds are options", async ({ page }) => {
   const tolerant = await findIssues(page, { tolerancePx: 200, checks: ["spill"] });
   expect(tolerant).toEqual([]);
 });
+
+test("captureSnapshot records the page's color scheme, or the theme it is given", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await serve(page, FIXED);
+  expect((await captureSnapshot(page)).body.viewport.theme).toBe("dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  expect((await captureSnapshot(page)).body.viewport.theme).toBe("light");
+  expect((await captureSnapshot(page, { theme: "dark" })).body.viewport.theme).toBe("dark");
+});

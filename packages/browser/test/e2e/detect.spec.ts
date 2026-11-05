@@ -552,3 +552,109 @@ test("content of a closed <details> is not visible, so closed accordions do not 
   expect(result.body.elements.flags[rowOf(result.body, "a4")] & flag).toBe(flag);
   expect(result.node.filter((f) => f.type === "overlap" || f.type === "spill")).toEqual([]);
 });
+
+test("theme: prefers-color-scheme by default, on the body and the ui.snapshot event", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  const dark = await scan(page, `<main><button data-testid="go">Go</button></main>`);
+  expect(dark.body.viewport.theme).toBe("dark");
+  const snapshotEvent = (out: Output, sha: string) =>
+    events(out).find((e) => e.type === "ui.snapshot" && e.data.sha256 === sha)!;
+  expect(snapshotEvent(dark.out, dark.sha256).data.theme).toBe("dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  const summary = await page.evaluate(() => (window as any).handle.snapshot());
+  const out = await output(page);
+  expectValid(out);
+  expect(summary.sha256).not.toBe(dark.sha256);
+  expect(snapshotEvent(out, summary.sha256).data.theme).toBe("light");
+  expect(out.snapshots.find((s) => s.sha256 === summary.sha256)!.body.viewport.theme).toBe("light");
+});
+
+test("theme: the host's theme() wins over the media query; anything outside the enum is unknown", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await openPage(page, `<main><button>Go</button></main>`);
+  await page.evaluate(() => {
+    const w = window as any;
+    document.documentElement.dataset.theme = "dark";
+    w.handle = w.CodepressInteractions.initInteractions({
+      sink: w.sink,
+      flushIntervalMs: 3_600_000,
+      routeSettleMs: 3_600_000,
+      allowedApiOrigins: [location.origin],
+      theme: () => {
+        if (document.documentElement.dataset.theme === "boom") throw new Error("no theme");
+        return document.documentElement.dataset.theme;
+      },
+    });
+  });
+  const themes: string[] = [];
+  for (const value of ["dark", "sepia", "boom", "light"]) {
+    const summary = await page.evaluate(async (value) => {
+      document.documentElement.dataset.theme = value;
+      // A visible change too, so every screen has its own body.
+      document.querySelector("button")!.textContent = `Go ${value}`;
+      return (window as any).handle.snapshot();
+    }, value);
+    const out = await output(page);
+    expectValid(out);
+    const event = events(out).find((e) => e.type === "ui.snapshot" && e.data.sha256 === summary.sha256)!;
+    expect(out.snapshots.find((s) => s.sha256 === summary.sha256)!.body.viewport.theme).toBe(event.data.theme);
+    themes.push(event.data.theme);
+  }
+  expect(themes).toEqual(["dark", "unknown", "unknown", "light"]);
+});
+
+test("a fixed element over a control at the page origin is reported; once scrolled, it is not", async ({ page }) => {
+  const result = await scan(
+    page,
+    `<main style="height:3000px">
+      <button data-testid="buy" style="position:absolute;left:1000px;top:700px;width:160px;height:40px">Buy</button>
+      <div data-testid="chat" style="position:fixed;left:980px;top:690px;width:220px;height:80px;background:#08f"></div>
+    </main>`,
+  );
+  expectSame(result);
+  const overlap = result.node.find((f) => f.type === "overlap")!;
+  expect([overlap.subject?.test_id, overlap.other?.test_id]).toEqual(["buy", "chat"]);
+  expect(overlap.evidence.subject_blocked_points).toBeGreaterThan(0);
+  expect(result.node[0]).toBe(overlap);
+  await page.evaluate(() => window.scrollTo(0, 300));
+  const summary = await page.evaluate(() => (window as any).handle.snapshot());
+  const out = await output(page);
+  const scrolled = out.snapshots.find((s) => s.sha256 === summary.sha256)!;
+  expect(checkSnapshot(scrolled.body).filter((f) => f.type === "overlap")).toEqual([]);
+});
+
+test("decorative layers and image crops carry content evidence and sort after content", async ({ page }) => {
+  const result = await scan(
+    page,
+    `<section data-testid="hero" style="position:relative;overflow:hidden;width:800px;height:400px">
+      <img data-testid="art" alt="" style="position:absolute;left:-60px;top:0;width:920px;height:400px;display:block" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==">
+      <div data-testid="glow" style="position:absolute;inset:0;pointer-events:none;background:linear-gradient(#0000,#0008)"></div>
+      <div aria-hidden="true" data-testid="shape" style="position:absolute;left:600px;top:40px;width:120px;height:120px;border-radius:50%;background:#f0f"><span data-testid="dot" style="display:block;width:20px;height:20px"></span></div>
+    </section>
+    <div style="position:relative;margin-top:20px">
+      <p data-testid="caption" style="margin:0;font-size:16px">Caption text</p>
+      <span data-testid="tag" style="position:absolute;left:40px;top:4px;width:60px;height:14px;background:#ccc"></span>
+    </div>
+    <div style="height:200px"><a data-testid="tiny" href="#x" style="font-size:10px">x</a></div>`,
+    { detect: { touch: true } },
+  );
+  expectSame(result);
+  const flags = result.body.legend.flags;
+  expect(result.body.elements.flags[rowOf(result.body, "dot")] & flags.aria_hidden).toBe(flags.aria_hidden);
+  const label = (f: Finding) => `${f.type} ${f.subject?.test_id} ${f.other?.test_id ?? ""}`.trim();
+  const order = result.node.map(label);
+  // Covered text first, then the tap target, then decorative and content-free findings.
+  expect(order[0]).toBe("overlap caption tag");
+  const tap = order.indexOf("small_tap_target tiny");
+  expect(tap).toBeGreaterThan(0);
+  const tail = result.node.slice(tap + 1);
+  expect(tail.length).toBeGreaterThan(0);
+  for (const f of tail)
+    expect(
+      f.evidence.subject_decorative === true ||
+        f.evidence.other_decorative === true ||
+        (f.evidence.subject_has_content === false && (f.type === "spill" || f.evidence.other_has_content === false)),
+      label(f),
+    ).toBe(true);
+  expect(order).toContain("spill art hero");
+});

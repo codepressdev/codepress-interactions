@@ -20,7 +20,12 @@ export const FLAGS = {
   popover_open: 1024,
   ellipsis: 2048,
   broken_image: 4096,
+  aria_hidden: 8192,
 } as const;
+
+/** Color scheme on screen. A bounded enum: anything else is recorded as "unknown". */
+export type Theme = "light" | "dark" | "unknown";
+export const THEMES: readonly Theme[] = ["light", "dark", "unknown"];
 
 /** Bit values of `hit_tests.points`: center, then the four inset points. */
 export const HIT_POINTS = ["center", "top_left", "top_right", "bottom_left", "bottom_right"] as const;
@@ -38,6 +43,8 @@ export interface SnapshotBody {
     scroll_y: number;
     /** `(pointer: coarse)` matched: the primary input is touch. Absent in 0.2.0 bodies. */
     coarse_pointer?: boolean;
+    /** Color scheme on screen: the host's `theme()` when given, else `prefers-color-scheme`. Absent before 0.3.0. */
+    theme?: Theme;
   };
   document: { width: number; height: number };
   element_count: number;

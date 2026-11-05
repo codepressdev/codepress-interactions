@@ -23,7 +23,7 @@ A failure lists one line per finding: the check, the elements (test ID, or a str
   "layout.overlap checkout × promo on /checkout/:id @1280x800: overlap_px=3520 … subject_blocked_points=5 … center_blocked subject_text_covered … [590f6922417e2a04f8d6c9341daf02c1]"
 ```
 
-Findings are pointers, not verdicts: each says what was measured, and you decide whether it is a bug. Sorting puts blocked controls first, then covered or clipped text, then the rest; it never drops one.
+Findings are pointers, not verdicts: each says what was measured, and you decide whether it is a bug. Sorting puts blocked controls first, then covered or clipped text, then the rest, then decorative layers and content-free findings (stacked or cropped images); it never drops one.
 
 ## API
 
@@ -40,6 +40,7 @@ Options (all optional):
 | `route` | from the URL | route template recorded on findings and used by fingerprints |
 | `routeSegments` | `[]` | literal path segments kept in the default route template (others become `:id`) |
 | `maxElements` | 50000 | element limit |
+| `theme` | the page's `prefers-color-scheme` | `"light"`, `"dark"` or `"unknown"` to record, for apps with their own theme toggle (Playwright's `colorScheme` / `page.emulateMedia` set the default) |
 | `ignoreFingerprints` | `[]` | fingerprints to leave out (known findings accepted for now) |
 | `events` | none | protocol v2 events to run the click and stability checks over too |
 | `checks` and thresholds | see [detect options](../browser/README.md#ui-checks) | |

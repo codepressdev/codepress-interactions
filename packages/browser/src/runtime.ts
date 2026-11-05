@@ -817,6 +817,7 @@ export class Runtime {
       ignoreSelector: validSelector(this.options.ignoreSelector),
       routeTemplate,
       shouldAbort: () => !this.active || document.visibilityState === "hidden",
+      theme: typeof this.options.theme === "function" ? this.options.theme : undefined,
     });
     if (!result || !this.active) {
       this.snapshotStats.skipped++;
@@ -844,6 +845,7 @@ export class Runtime {
       walk_ms: clampMs(result.walkMs),
       slices: result.slices,
       max_slice_ms: clampMs(result.maxSliceMs),
+      theme: body.viewport.theme ?? "unknown",
     };
     const summary: SnapshotSummary = {
       ...data,

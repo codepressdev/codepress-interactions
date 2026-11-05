@@ -31,6 +31,8 @@ export interface CaptureOptions {
   routeSegments?: string[];
   /** Element limit. Default 50000. */
   maxElements?: number;
+  /** Theme to record when the app has its own toggle. Default: the page's prefers-color-scheme (`colorScheme` in the Playwright config, or `page.emulateMedia`). */
+  theme?: "light" | "dark" | "unknown";
 }
 
 export interface Snapshot {
@@ -60,6 +62,7 @@ export async function captureSnapshot(page: Page, options: CaptureOptions = {}):
       routeTemplate: options.route,
       routeSegments: options.routeSegments,
       maxElements: options.maxElements,
+      theme: options.theme,
     },
   };
   const body = await page.evaluate(async ({ script, options }) => {

@@ -25,7 +25,8 @@ export type {
 export { createHttpSink, createMemorySink } from "./sink";
 export type { DetectOptions, ElementRef, Evidence, FindingData } from "./detect/types";
 export type { SnapshotBody, SnapshotSummary } from "./snapshot";
-export { FLAGS, HIT_POINTS, POSITIONS } from "./snapshot";
+export { FLAGS, HIT_POINTS, POSITIONS, THEMES } from "./snapshot";
+export type { Theme } from "./format";
 export { VERSION, defaultRouteTemplate } from "./util";
 
 const registryKey = Symbol.for("@codepress/interactions-browser/v1");

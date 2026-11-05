@@ -62,20 +62,30 @@ export function detect(
 }
 
 /**
- * Priority tier: 0 when a control's hit test is blocked, 1 when text is covered
- * or clipped, 2 for everything else.
+ * Priority tier, from measured evidence only:
+ * 0: a control's hit test is blocked;
+ * 1: text is covered or clipped;
+ * 2: everything else;
+ * 3: decorative: an element in the finding is a decorative layer (no text, no
+ *    control, and `pointer-events: none` or `aria-hidden`), or none of its
+ *    elements holds text or a control (image stacks, cropped images).
+ * Earlier tiers win: a decorative layer that covers text is tier 1.
  */
-export function findingTier(finding: Pick<Finding, "evidence">): 0 | 1 | 2 {
+export function findingTier(finding: Pick<Finding, "evidence">): 0 | 1 | 2 | 3 {
   const evidence = finding.evidence ?? {};
   for (const [key, value] of Object.entries(evidence))
     if (key.endsWith("blocked_points") && typeof value === "number" && value > 0) return 0;
   if (evidence.subject_text_covered === true || evidence.text_clipped === true) return 1;
+  if (evidence.subject_decorative === true || evidence.other_decorative === true) return 3;
+  const sides = ["subject_has_content", "other_has_content"].filter((key) => key in evidence);
+  if (sides.length > 0 && sides.every((key) => evidence[key] === false)) return 3;
   return 2;
 }
 
 /**
- * Default order: blocked controls first, then covered text, then the rest; within
- * a tier by check (in `CHECK_NAMES` order), then as found. Never drops a finding.
+ * Default order: blocked controls first, then covered text, then the rest, then
+ * decorative findings (see `findingTier`); within a tier by check (in
+ * `CHECK_NAMES` order), then as found. Never drops a finding.
  */
 export function sortFindings<T extends Finding>(findings: readonly T[]): T[] {
   const order = (finding: T) => {

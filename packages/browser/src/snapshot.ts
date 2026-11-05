@@ -3,11 +3,11 @@
  * geometry and layout facts in a columnar body. Never records text, values,
  * attributes other than role/test IDs, URLs or HTML.
  */
-import { FLAGS, HIT_POINTS, POSITIONS, type SnapshotBody } from "./format";
+import { FLAGS, HIT_POINTS, POSITIONS, THEMES, type SnapshotBody, type Theme } from "./format";
 import type { SnapshotTrigger } from "./types";
 import { now, safeIdentifier } from "./util";
 
-export { FLAGS, HIT_POINTS, POSITIONS } from "./format";
+export { FLAGS, HIT_POINTS, POSITIONS, THEMES } from "./format";
 export type { SnapshotBody } from "./format";
 
 export interface SnapshotSummary {
@@ -39,6 +39,8 @@ export interface WalkOptions {
   routeTemplate: string | null;
   /** Checked before every slice; returning true abandons the walk. */
   shouldAbort: () => boolean;
+  /** The theme actually showing, when the app has its own toggle. Default: prefers-color-scheme. */
+  theme?: () => unknown;
 }
 
 export interface WalkResult {
@@ -180,6 +182,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     scroll_x: r2(window.scrollX),
     scroll_y: r2(window.scrollY),
     coarse_pointer: coarsePointer(),
+    theme: themeOf(options.theme),
   };
   const tags = new Dictionary();
   const roles = new Dictionary();
@@ -298,6 +301,8 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     if (typeof ShadowRoot === "function" && element.getRootNode() instanceof ShadowRoot)
       flags |= FLAGS.in_shadow;
     if (popoverOpen) flags |= FLAGS.popover_open;
+    // Hidden from assistive technology, itself or through an ancestor.
+    if (element.closest('[aria-hidden="true"]')) flags |= FLAGS.aria_hidden;
     if (
       style.textOverflow === "ellipsis" ||
       ((style as CSSStyleDeclaration & { webkitLineClamp?: string }).webkitLineClamp ?? "none") !== "none"
@@ -434,6 +439,30 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     sliceMs,
     sliceElements,
   };
+}
+
+/**
+ * The host's answer when it gives one (anything outside the enum, or a throw,
+ * is "unknown": the host said it knows, so the media query would be a guess);
+ * otherwise the user's prefers-color-scheme.
+ */
+export function themeOf(host?: () => unknown): Theme {
+  if (host) {
+    try {
+      const value = host();
+      return (THEMES as readonly unknown[]).includes(value) ? (value as Theme) : "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+  try {
+    if (typeof matchMedia !== "function") return "unknown";
+    if (matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+    if (matchMedia("(prefers-color-scheme: light)").matches) return "light";
+  } catch {
+    // fall through
+  }
+  return "unknown";
 }
 
 function coarsePointer(): boolean {

@@ -36,6 +36,13 @@ export const intersect = (a: Rect, b: Rect | null): Rect =>
 
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
+export interface Content {
+  text: boolean | null;
+  textPx: number;
+  interactive: boolean;
+  decorative: boolean;
+}
+
 export class SnapshotView {
   readonly n: number;
   readonly parent: Int32Array;
@@ -57,7 +64,10 @@ export class SnapshotView {
   readonly textBoxes: Map<number, Rect[]>;
   readonly hitRows: Map<number, number>;
   readonly documentScrolls: boolean;
+  /** The page is scrolled away from its origin. */
+  readonly documentScrolled: boolean;
   private paths = new Map<number, string>();
+  private contents = new Map<number, Content>();
 
   constructor(readonly body: SnapshotBody) {
     const e = body.elements;
@@ -153,10 +163,44 @@ export class SnapshotView {
     for (let i = 0; i < hn; i++) if (Number.isInteger(h.element[i]) && h.element[i] >= 0 && h.element[i] < n) this.hitRows.set(h.element[i], i);
     const doc = body.document ?? { width: 0, height: 0 };
     this.documentScrolls = num(doc.height) > clientHeight + 1 || num(doc.width) > clientWidth + 1;
+    this.documentScrolled = num(body.viewport?.scroll_x) > 0.5 || num(body.viewport?.scroll_y) > 0.5;
   }
 
   has(row: number, flag: number): boolean {
     return (this.flags[row] & flag) !== 0;
+  }
+
+  /**
+   * What the element's subtree holds that a person would read or use: shown
+   * text (its area, in px²) and enabled controls. `text` is null when an opaque
+   * box (canvas, iframe, video) hides whether there is any.
+   */
+  content(row: number): Content {
+    const cached = this.contents.get(row);
+    if (cached) return cached;
+    let textPx = 0;
+    let unknown = false;
+    let interactive = false;
+    for (let at = row; at <= this.end[row]; at++) {
+      if (!this.shown(at)) continue;
+      if (this.has(at, FLAGS.interactive)) interactive = true;
+      if (this.has(at, FLAGS.opaque)) unknown = true;
+      for (const box of this.textBoxes.get(at) ?? []) textPx += Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top);
+    }
+    const text = textPx > 0 ? true : unknown ? null : false;
+    const result: Content = {
+      text,
+      textPx,
+      interactive,
+      // Nothing to read or use, and either hidden from assistive technology or
+      // not hit-testable: a decorative layer (gradient, glow, background art).
+      decorative:
+        text === false &&
+        !interactive &&
+        (this.has(row, FLAGS.aria_hidden) || this.has(row, FLAGS.pointer_events_none)),
+    };
+    this.contents.set(row, result);
+    return result;
   }
 
   /** `row` is `ancestor` or inside it. */

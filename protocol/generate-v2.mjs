@@ -56,6 +56,7 @@ const LegacyData = {
     "v1 event data, unchanged except: sdk_version moved to the batch, and request_label (a bounded label returned by the host's requestLabel callback) was added.",
 };
 const TRIGGERS = ["route", "click", "resize", "visible", "manual"];
+const THEMES = ["light", "dark", "unknown"];
 const SnapshotData = {
   ...strict({
     sha256: { type: "string", pattern: SHA, description: "SHA-256 of the uncompressed snapshot body bytes; the body is stored at /v2/snapshots/{sha256}." },
@@ -70,7 +71,8 @@ const SnapshotData = {
     walk_ms: ms,
     slices: int(1, 1000000),
     max_slice_ms: ms,
-  }),
+    theme: { type: "string", enum: THEMES, description: "Color scheme on screen, as in the body's viewport.theme. Absent before 0.3.0." },
+  }, ["sha256", "trigger", "route_template", "viewport_width", "viewport_height", "element_count", "truncated", "torn", "bytes", "walk_ms", "slices", "max_slice_ms"]),
   description: "A screen was captured. Sent once per distinct sha256 per page session.",
 };
 const SIGNALS = ["layout_shift", "event_timing", "long_task", "image_error", "uncaught_error"];
@@ -233,7 +235,7 @@ const col = (items, desc) => ({ type: "array", maxItems: 50000, items, ...(desc 
 const coord = num(-1e7, 1e7);
 const size = num(0, 1e7);
 const idx = int(-1, 49999);
-const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512, popover_open: 1024, ellipsis: 2048, broken_image: 4096 };
+const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512, popover_open: 1024, ellipsis: 2048, broken_image: 4096, aria_hidden: 8192 };
 const snapshot = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: base + "v2-snapshot.schema.json",
@@ -252,6 +254,7 @@ const snapshot = {
       scroll_x: coord,
       scroll_y: coord,
       coarse_pointer: { type: "boolean", description: "(pointer: coarse) matched: the primary input is touch. Absent before 0.3.0." },
+      theme: { type: "string", enum: THEMES, description: "Color scheme on screen: the host's theme() option when given (anything outside the enum is unknown), else prefers-color-scheme. Absent before 0.3.0." },
     }, ["width", "height", "client_width", "client_height", "device_pixel_ratio", "scroll_x", "scroll_y"]),
     document: strict({ width: size, height: size }),
     element_count: int(0, 50000),
@@ -286,7 +289,7 @@ const snapshot = {
       height: col(size),
       z_index: col(nullable(int(-2147483648, 2147483647)), "Computed z-index; null for auto."),
       position: col(int(0, 4), "Index into legend.position (computed CSS position)."),
-      flags: col(int(0, 8191), "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. Bodies before 0.3.0 never set the last three."),
+      flags: col(int(0, 16383), "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. aria_hidden: the element or an ancestor has aria-hidden=true. Bodies before 0.3.0 never set the last four."),
       text_length: col(count, "Characters in direct, non-whitespace text node children (trimmed). The text itself is never read into the body."),
     }),
     text_boxes: {

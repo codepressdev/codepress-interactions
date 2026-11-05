@@ -15,7 +15,7 @@ import {
   type ResolvedOptions,
   boundEvidence,
 } from "./types";
-import { FIXED_POSITION, SnapshotView, area, intersect, type Rect } from "./view";
+import { FIXED_POSITION, SnapshotView, area, intersect, type Content, type Rect } from "./view";
 
 const r2 = (value: number): number => {
   const rounded = Math.round(value * 100) / 100;
@@ -142,7 +142,11 @@ function overlap(ctx: Context): void {
   }
 }
 
-/** Overlays over the page, and content scrolling under a pinned element, are not overlaps. */
+/**
+ * Overlays over the page, and content scrolled under a pinned element, are not
+ * overlaps. At the page's origin nothing has scrolled yet, so a fixed or sticky
+ * element covering content there is reported.
+ */
 function excluded(view: SnapshotView, a: number, b: number): boolean {
   if (view.layer[a] !== view.layer[b] && (view.layer[a] !== -1 || view.layer[b] !== -1)) return true;
   const pa = view.pinned[a];
@@ -151,7 +155,7 @@ function excluded(view: SnapshotView, a: number, b: number): boolean {
     // One side is pinned (fixed or sticky) and the other is not: their offset
     // changes as the page or a scroller scrolls, so crossing is scrolling.
     const loose = pa === -1 ? a : b;
-    if (view.documentScrolls || view.scroller[loose] !== -1) return true;
+    if ((view.documentScrolls && view.documentScrolled) || view.scroller[loose] !== -1) return true;
   }
   return false;
 }
@@ -230,6 +234,8 @@ function overlapFinding(ctx: Context, a: number, b: number): void {
   const subjectText = textOverlap(view, subject, vo, options.overlapMinPx);
   const otherText = textOverlap(view, other, vs, options.overlapMinPx);
   const common = view.common(subject, other);
+  const sc = view.content(subject);
+  const oc = view.content(other);
   emit(ctx, "overlap", subject, other, {
     overlap_px: r2(hitArea),
     overlap_width_px: r2(hit.right - hit.left),
@@ -242,15 +248,25 @@ function overlapFinding(ctx: Context, a: number, b: number): void {
     center_blocked: covered.center,
     subject_text_covered: subjectText ? subjectText.covered : null,
     subject_text_overlap_px: subjectText ? subjectText.px : null,
+    subject_text_covered_ratio: subjectText && sc.textPx > 0 ? ratio(subjectText.px, sc.textPx) : null,
     other_text_overlap_px: otherText ? otherText.px : null,
     paint_order_from_hit_test: fromHitTest,
     subject_overlay: view.has(subject, FLAGS.overlay),
     other_overlay: view.has(other, FLAGS.overlay),
     other_pointer_events_none: view.has(other, FLAGS.pointer_events_none),
+    subject_has_content: contentOf(sc),
+    other_has_content: contentOf(oc),
+    subject_decorative: sc.decorative,
+    other_decorative: oc.decorative,
     subject_depth_to_common: common.a,
     other_depth_to_common: common.b,
     common_parent_positioned: common.row >= 0 ? view.position[common.row] !== 0 : null,
   });
+}
+
+/** Text or a control somewhere in the subtree; null when an opaque box hides it and there is no control. */
+function contentOf(content: Content): boolean | null {
+  return content.interactive || content.text === true ? true : content.text === null ? null : false;
 }
 
 // ---- Spill ---------------------------------------------------------------
@@ -283,6 +299,7 @@ function spill(ctx: Context): void {
     spilled[i] = 1;
     if (inherited[i]) continue;
     const text = view.textBoxes.get(i);
+    const content = view.content(i);
     emit(ctx, "spill", i, container, {
       overflow_left_px: r2(over.left),
       overflow_right_px: r2(over.right),
@@ -292,6 +309,8 @@ function spill(ctx: Context): void {
       subject_interactive: view.has(i, FLAGS.interactive),
       subject_has_text: view.has(i, FLAGS.opaque) ? null : !!text,
       container_is_parent: container === view.parent[i],
+      subject_has_content: contentOf(content),
+      subject_decorative: content.decorative,
     });
   }
 }

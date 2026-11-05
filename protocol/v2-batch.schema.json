@@ -758,6 +758,15 @@
           "type": "number",
           "minimum": 0,
           "maximum": 86400000
+        },
+        "theme": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark",
+            "unknown"
+          ],
+          "description": "Color scheme on screen, as in the body's viewport.theme. Absent before 0.3.0."
         }
       },
       "description": "A screen was captured. Sent once per distinct sha256 per page session."
