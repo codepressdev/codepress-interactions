@@ -27,9 +27,16 @@ export interface InteractionOptions {
   root?: Element;
   /**
    * Maps the current location to a bounded route label. Default: the path with
-   * every segment that is not a lowercase word replaced by `:id`; never the query.
+   * every segment replaced by `:id` unless it is listed in `routeSegments`; never
+   * the query or hash.
    */
   routeTemplate?: (location: URL) => string | null | undefined;
+  /**
+   * Static lowercase path words the default route template may keep, for example
+   * `["orders", "items", "settings"]` (pattern `[a-z][a-z_-]*`, at most 32
+   * characters, 256 words). Default: none, so every segment is `:id`.
+   */
+  routeSegments?: string[];
   /** Bounded static label for an observed request. Default: no label. */
   requestLabel?: (url: URL, init: RequestInit | undefined) => string | null | undefined;
   /** Correlation header added to allowed-origin requests. `false` disables it. Default `X-Interaction-Id`. */

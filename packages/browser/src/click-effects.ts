@@ -64,6 +64,8 @@ export class ClickEffects {
   private observer?: MutationObserver;
   private removals: (() => void)[] = [];
   private active = false;
+  /** Settled clicks whose after-snapshot is still being taken. */
+  private awaitingAfter = new Set<() => void>();
 
   constructor(private host: ClickHost) {}
 
@@ -191,10 +193,14 @@ export class ClickEffects {
   /** Page is going away: report the open click as incomplete, synchronously. */
   pageHidden(): void {
     if (this.current) this.finish(this.current, "page_hidden");
+    // Settled clicks still waiting for their after-snapshot are reported now,
+    // without an after hash, so page unload cannot lose them.
+    for (const report of this.awaitingAfter) report();
   }
 
   stop(): void {
     this.active = false;
+    this.awaitingAfter.clear();
     if (this.current) {
       clearTimeout(this.current.quiet);
       clearTimeout(this.current.hard);
@@ -268,13 +274,20 @@ export class ClickEffects {
       this.host.emit(click.id, data);
       return;
     }
+    let reported = false;
+    const report = (hash: string | null) => {
+      if (reported) return;
+      reported = true;
+      this.awaitingAfter.delete(flush);
+      if (!this.active) return;
+      data.after_sha256 = hash;
+      this.host.emit(click.id, data);
+    };
+    const flush = () => report(null);
+    this.awaitingAfter.add(flush);
     this.host
       .snapshotAfter()
       .catch(() => null)
-      .then((hash) => {
-        if (!this.active) return;
-        data.after_sha256 = hash;
-        this.host.emit(click.id, data);
-      });
+      .then(report, flush);
   }
 }

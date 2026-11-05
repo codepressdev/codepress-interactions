@@ -119,7 +119,7 @@ test("snapshot boxes match getBoundingClientRect for sampled elements", async ({
 
 test("route settled and resize settled trigger snapshots", async ({ page }) => {
   await openPage(page, '<div data-testid="a" style="width:50%;height:40px"></div>');
-  await init(page, { routeSettleMs: 50, resizeSettleMs: 50, visibleSettleMs: 50 });
+  await init(page, { routeSettleMs: 50, resizeSettleMs: 50, visibleSettleMs: 50, routeSegments: ["orders"] });
   await expect.poll(async () => (await output(page)).snapshots.length).toBe(1);
   await page.evaluate(() => history.pushState({}, "", "/orders/8f14e45f-ceea-467f-a0e6-0e2a1b0c2b11?q=secret"));
   await page.evaluate(() => {

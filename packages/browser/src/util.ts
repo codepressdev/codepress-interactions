@@ -41,11 +41,28 @@ const ROUTE = /^\/[A-Za-z0-9_\-./:{}[\]*()+@~]{0,255}$/;
 const WORD = /^[a-z][a-z_-]{0,31}$/;
 
 /** Default route template: lowercase words survive, every other segment becomes `:id`. */
-export function defaultRouteTemplate(location: URL): string {
+/** Static path words an app allows in route templates (`routeSegments`). */
+export function routeSegmentSet(value: unknown): ReadonlySet<string> {
+  const words = new Set<string>();
+  if (!Array.isArray(value)) return words;
+  for (const word of value.slice(0, 256)) if (typeof word === "string" && WORD.test(word)) words.add(word);
+  return words;
+}
+
+/**
+ * Default route template. Only the path is used, never the query or hash, and
+ * every segment becomes `:id` unless it is one of the static words in `allowed`
+ * (the `routeSegments` option). With no allowlist, `/u/jane-smith` and
+ * `/acme-corp/projects` both become `/:id/:id`, so no path text reaches the
+ * payload. Pass `routeSegments`, or `routeTemplate` for exact router patterns.
+ */
+export function defaultRouteTemplate(
+  location: URL,
+  allowed: ReadonlySet<string> | readonly string[] = [],
+): string {
+  const words = allowed instanceof Set ? allowed : routeSegmentSet(allowed);
   const segments = location.pathname.split("/").filter(Boolean).slice(0, 16);
-  return (
-    "/" + segments.map((segment) => (WORD.test(segment) ? segment : ":id")).join("/")
-  );
+  return "/" + segments.map((segment) => (words.has(segment) ? segment : ":id")).join("/");
 }
 
 export function safeRoute(value: unknown): string | null {

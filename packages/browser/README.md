@@ -48,6 +48,10 @@ CSS-only spinners without semantic markup may remain an unknown structural chang
 Signed URLs are excluded from request instrumentation. Existing interaction headers
 are preserved; a valid UUID is used for correlation, otherwise attribution is unknown.
 
+## Route templates
+
+Events and snapshots carry a route template, never the URL. By default every path segment is replaced by `:id`, so `/u/jane-smith` and `/acme-corp/projects` are both sent as `/:id/:id`: a lowercase slug can be a username, organization or title, so it is never kept unless the app says so. List the static words of your routes in `routeSegments` (`/acme-corp/projects` with `routeSegments: ["projects"]` becomes `/:id/projects`), or pass `routeTemplate` to return your router's own pattern. The query and hash are never used.
+
 ## Screen snapshots
 
 Each settled screen is recorded as element boxes in a columnar body ([schema](../../protocol/v2-snapshot.schema.json), [example](../../protocol/v2-snapshot.json)): parent, tag, role, safe test ID, `x`/`y`/`width`/`height` (viewport CSS pixels from `getBoundingClientRect`), z-index, CSS position, flags (visible, interactive, clipped, scrollable, overlay, ignored, pointer-events none, opaque, clips content, in shadow root) and text length. For elements with direct text it also records the box of the rendered text itself (from a `Range`, geometry only), so an element box can overlap something while its text does not. For visible interactive elements it probes `elementFromPoint` at the center and four inset points and stores how many land on something else and which element is on top. `elementFromPoint` is never called for other elements. No text, values, attribute values (other than role and safe test IDs), URLs or HTML are recorded.
@@ -86,7 +90,8 @@ sink.snapshots; // { sha256, serialized, body }
 | `endpoint` + `projectKey` | | Hosted service base URL and public key. |
 | `sink` | | Alternative to `endpoint`. |
 | `release` | none | Bounded release label sent with every batch. |
-| `routeTemplate(url)` | lowercase words kept, other path segments `:id`, no query | Return a bounded route label such as `/orders/[id]`. Values with a query or unsafe characters are dropped. |
+| `routeSegments` | none | Static lowercase path words the default route template keeps, e.g. `["orders", "items"]`. |
+| `routeTemplate(url)` | every path segment `:id` unless in `routeSegments`; no query or hash | Return a bounded route label such as `/orders/[id]`. Values with a query or unsafe characters are dropped. |
 | `requestLabel(url, init)` | none | Bounded static label for an observed request (`[A-Za-z0-9_.:/-]`, 64 characters). |
 | `propagateHeader` | `X-Interaction-Id` | Correlation header name for allowed origins; `false` sends none. A readable `X-Trace-Id` response header is recorded. |
 | `snapshots` | `true` | Turn screen snapshots off. |

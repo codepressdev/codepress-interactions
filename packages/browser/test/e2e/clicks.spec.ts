@@ -149,3 +149,46 @@ test("dialog detection stays bounded inside a very large added subtree", async (
   expect(click.data).toMatchObject({ control_id: "big", dialog_opened: false, end_reason: "settled" });
   expect(click.data.mutation_count).toBeGreaterThan(0);
 });
+
+test("a settled click whose after-snapshot is still walking is not lost when the page unloads", async ({ page }) => {
+  await openPage(page, '<button data-testid="go" id="go">Go</button><div id="out"></div>' + "<div><span></span></div>".repeat(10000), { api });
+  await page.evaluate(() => {
+    const w = window as any;
+    // Persists batches synchronously: requests sent during unload are invisible to Playwright.
+    const sink = {
+      sendBatch(_batch: unknown, serialized: string) {
+        const saved = JSON.parse(sessionStorage.getItem("batches") ?? "[]");
+        saved.push(serialized);
+        sessionStorage.setItem("batches", JSON.stringify(saved));
+      },
+      sendSnapshot() {},
+    };
+    w.handle = w.CodepressInteractions.initInteractions({
+      sink,
+      flushIntervalMs: 3_600_000,
+      routeSettleMs: 3_600_000,
+      clickSettleMs: 30,
+      // A 1 ms slice budget spreads the 20k-element walk over many idle callbacks.
+      maxSliceMs: 1,
+      maxElements: 50000,
+    });
+    document.getElementById("go")!.addEventListener("click", () => {
+      document.getElementById("out")!.textContent = "done";
+    });
+  });
+  await page.click("#go");
+  // The click has settled (30 ms) and its after-snapshot walk is running.
+  await page.waitForTimeout(150);
+  const state = await page.evaluate(() => ({
+    walked: (window as any).handle.getDiagnostics().snapshots.taken,
+    saved: sessionStorage.getItem("batches"),
+  }));
+  expect(state).toEqual({ walked: 0, saved: null });
+  await page.goto(`${APP}/next`);
+  const saved: string[] = await page.evaluate(() => JSON.parse(sessionStorage.getItem("batches") ?? "[]"));
+  const batches = saved.map((entry) => JSON.parse(entry));
+  for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+  const clicks = batches.flatMap((b) => b.events).filter((e: any) => e.type === "ui.click.settled");
+  expect(clicks).toHaveLength(1);
+  expect(clicks[0].data).toMatchObject({ control_id: "go", end_reason: "settled", incomplete: false, after_sha256: null });
+});

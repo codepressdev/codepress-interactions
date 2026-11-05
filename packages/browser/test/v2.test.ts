@@ -80,13 +80,17 @@ describe("fetch patch chaining", () => {
 });
 
 describe("options", () => {
-  it("default route template collapses IDs and never includes the query", () => {
-    const route = (path: string) => defaultRouteTemplate(new URL(path, "https://app.test"));
-    expect(route("/orders/123/items?q=secret")).toBe("/orders/:id/items");
-    expect(route("/u/8f14e45f-ceea-467f-a0e6-0e2a1b0c2b11/settings")).toBe("/u/:id/settings");
-    expect(route("/p/Ab3kF9xQ")).toBe("/p/:id");
-    expect(route("/files/report.pdf")).toBe("/files/:id");
+  it("default route template collapses every segment unless allowlisted, and never includes the query", () => {
+    const route = (path: string, words?: string[]) => defaultRouteTemplate(new URL(path, "https://app.test"), words);
+    expect(route("/u/jane-smith")).toBe("/:id/:id");
+    expect(route("/acme-corp/projects?q=secret#x")).toBe("/:id/:id");
     expect(route("/")).toBe("/");
+    const words = ["orders", "items", "u", "settings", "projects", "Bad Word", 7 as any];
+    expect(route("/orders/123/items?q=secret", words)).toBe("/orders/:id/items");
+    expect(route("/u/8f14e45f-ceea-467f-a0e6-0e2a1b0c2b11/settings", words)).toBe("/u/:id/settings");
+    expect(route("/u/jane-smith", words)).toBe("/u/:id");
+    expect(route("/acme-corp/projects", words)).toBe("/:id/projects");
+    expect(route("/orders/orders", words)).toBe("/orders/orders");
   });
 
   it("uses routeTemplate and requestLabel callbacks, keeping only bounded labels", async () => {

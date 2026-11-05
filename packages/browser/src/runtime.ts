@@ -30,6 +30,7 @@ import {
   VERSION,
   clampMs,
   defaultRouteTemplate,
+  routeSegmentSet,
   numberOption,
   safeHeaderName,
   safeIdentifier,
@@ -103,6 +104,7 @@ export class Runtime {
   private snapshotQueue: PendingSnapshot[] = [];
   private draining: Promise<void> | null = null;
   private uploading: PendingSnapshot | null = null;
+  private routeWords?: ReadonlySet<string>;
   private snapshotStats = { taken: 0, uploaded: 0, deduplicated: 0, skipped: 0 };
   private lastSnapshot: SnapshotSummary | null = null;
   private walks = 0;
@@ -208,7 +210,7 @@ export class Runtime {
       const url = new URL(location.href);
       const template = this.options.routeTemplate
         ? this.options.routeTemplate(url)
-        : defaultRouteTemplate(url);
+        : defaultRouteTemplate(url, (this.routeWords ??= routeSegmentSet(this.options.routeSegments)));
       return safeRoute(template);
     } catch {
       return null;

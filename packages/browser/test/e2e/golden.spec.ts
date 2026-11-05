@@ -46,6 +46,7 @@ test("regenerate golden fixtures", async ({ page }) => {
       routeSettleMs: 3_600_000,
       clickSettleMs: 100,
       release: "shop-web@1.8.0",
+      routeSegments: ["checkout"],
       requestLabel: (url: URL, init?: RequestInit) => `cart.${(init?.method ?? "GET").toLowerCase()}`,
     });
   });

@@ -59,10 +59,46 @@ test("a sentinel in text, values, title, href query and alt appears nowhere in s
   const everything = [...out.serialized, ...out.snapshots.map((s) => s.serialized), ...out.snapshots.map((s) => s.sha256)].join("\n");
   expect(everything.toLowerCase()).not.toContain(S.toLowerCase());
   expect(everything).not.toContain("typed");
-  // The route template keeps lowercase words and drops IDs and queries.
+  // With no routeSegments allowlist every path segment is collapsed.
   const routes = new Set(
     [...events(out).map((e) => e.data.route_template), ...out.snapshots.map((s) => s.body.route_template)].filter(Boolean),
   );
-  expect([...routes].sort()).toEqual(["/account/:id", "/start/:id"]);
+  expect([...routes].sort()).toEqual(["/:id/:id"]);
   expect(out.batches[0].release).toBe("web-1.2.3");
 });
+
+// Lowercase slugs look like route words, so only an explicit allowlist keeps a segment.
+const SLUGS = ["jane-smith", "acme-corp", "my-secret-post"];
+
+for (const routeSegments of [undefined, ["u", "projects", "blog"]]) {
+  test(`lowercase path slugs never reach the sink (${routeSegments ? "with" : "without"} routeSegments)`, async ({ page }) => {
+    await openPage(
+      page,
+      `<button data-testid="next" id="next">Next</button>
+       <script>
+         const paths = ["/acme-corp/projects", "/blog/my-secret-post"];
+         document.getElementById("next").addEventListener("click", () => {
+           history.pushState({}, "", paths.shift() ?? "/u/jane-smith#acme-corp");
+           return fetch("/api/projects/acme-corp?owner=jane-smith");
+         });
+       </script>`,
+      { api: (route) => route.fulfill({ contentType: "application/json", body: "{}" }) },
+      "/u/jane-smith",
+    );
+    await init(page, { clickSettleMs: 50, routeSettleMs: 20, ...(routeSegments ? { routeSegments } : {}) });
+    await expect.poll(async () => (await output(page)).snapshots.length).toBe(1);
+    for (let i = 1; i <= 3; i++) {
+      await page.click("#next");
+      await expect.poll(async () => events(await output(page)).filter((e) => e.type === "ui.click.settled").length).toBe(i);
+    }
+    await page.evaluate(() => (window as any).handle.snapshot());
+    const out = await output(page);
+    expectValid(out);
+    const everything = [...out.serialized, ...out.snapshots.map((s) => s.serialized)].join("\n");
+    for (const slug of SLUGS) expect(everything, slug).not.toContain(slug);
+    const routes = new Set(events(out).map((e) => e.data.route_template).filter(Boolean));
+    expect([...routes].sort()).toEqual(
+      routeSegments ? ["/:id/projects", "/blog/:id", "/u/:id"] : ["/:id/:id"],
+    );
+  });
+}
