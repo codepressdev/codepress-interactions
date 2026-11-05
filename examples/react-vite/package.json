@@ -13,8 +13,8 @@
   "dependencies": {
     "@codepress/interactions-browser": "workspace:^",
     "@codepress/interactions-react": "workspace:^",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@codepress/interactions-playwright": "workspace:^",
