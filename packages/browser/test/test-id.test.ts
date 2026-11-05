@@ -262,24 +262,62 @@ describe("the testId hook", () => {
     expect(rejections).toEqual([]);
   });
 
-  it("a hook that writes aria-busy or disabled does not keep the mutation observer running", async () => {
+  const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it.each<[string, (element: Element, call: number) => void]>([
+    ["writes aria-busy", (element) => element.setAttribute("aria-busy", "false")],
+    ["toggles disabled", (element) => element.toggleAttribute("disabled")],
+    [
+      "alternates its ID and writes aria-busy",
+      (element, call) => {
+        element.setAttribute("data-testid", call % 2 ? "save-button" : "save-action");
+        element.setAttribute("aria-busy", String(call % 2 === 0));
+      },
+    ],
+    [
+      "adds a busy element",
+      () => {
+        const added = document.createElement("div");
+        added.setAttribute("aria-busy", "true");
+        added.setAttribute("data-testid", "added-region");
+        document.body.append(added);
+      },
+    ],
+  ])("a hook that %s cannot keep the mutation observer running", async (_name, write) => {
     let calls = 0;
-    const { handle, sink } = start({
+    const { handle } = start({
       testId: (value, element) => {
-        calls++;
-        element.setAttribute("aria-busy", "false");
-        element.toggleAttribute("disabled");
+        write(element, ++calls);
         return value;
       },
     });
     mount(["save-button"]);
     await handle.snapshot();
     // Reached only if the event loop still runs.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settled();
+    await settled();
+    const after = calls;
+    await settled();
+    expect(calls).toBe(after);
+    expect(calls).toBeLessThanOrEqual(10);
     await handle.flush();
-    // The walk's call and one from the observer; the observer never calls it again.
-    expect(calls).toBeLessThanOrEqual(2);
-    expect(eventsOf(sink).some((e) => e.type === "ui.state.changed" && e.data.control_id === "save-button")).toBe(true);
+  });
+
+  it("gets the hook's current answer on state events, not its first one", async () => {
+    let allowed = true;
+    const { handle, sink } = start({ testId: (value) => (allowed ? value : null) });
+    document.body.innerHTML = '<div data-testid="save-status"></div>';
+    const element = document.body.firstElementChild!;
+    element.setAttribute("aria-busy", "true");
+    await settled();
+    allowed = false;
+    element.setAttribute("aria-busy", "false");
+    await settled();
+    await handle.flush();
+    const ids = eventsOf(sink)
+      .filter((e) => e.type === "ui.state.changed" && e.data.feedback_type === "busy" && e.data.phase !== "appeared")
+      .map((e) => e.data.control_id ?? null);
+    expect(ids).toEqual(["save-status", null]);
   });
 
   it("asks the hook again when the element's ID changes", async () => {

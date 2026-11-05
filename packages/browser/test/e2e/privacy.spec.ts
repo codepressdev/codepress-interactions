@@ -168,6 +168,18 @@ for (const [name, write] of [
   ["a constant aria-busy", 'element.setAttribute("aria-busy", "false")'],
   ["a toggled aria-busy", 'element.setAttribute("aria-busy", String(element.getAttribute("aria-busy") !== "true"))'],
   ["a toggled disabled", 'element.toggleAttribute("disabled")'],
+  [
+    "an alternating ID and aria-busy",
+    'element.setAttribute("data-testid", window.calls % 2 ? "save-button" : "save-action"); element.setAttribute("aria-busy", String(window.calls % 2 === 0))',
+  ],
+  [
+    "a new busy element",
+    'const added = document.createElement("div"); added.setAttribute("aria-busy", "true"); added.setAttribute("data-testid", "added-region"); document.body.append(added)',
+  ],
+  [
+    "a busy clone of itself",
+    'const clone = element.cloneNode(true); clone.setAttribute("aria-busy", "true"); element.replaceWith(clone)',
+  ],
 ]) {
   test(`a testId hook that writes ${name} leaves the page responsive`, async ({ page }) => {
     await openPage(page, `<button data-testid="save-button">Go</button><p id="alive">alive</p>`);
@@ -193,6 +205,6 @@ for (const [name, write] of [
     const frozen = new Promise<string>((resolve) => setTimeout(() => resolve("frozen"), 3000));
     const result = await Promise.race([answer, frozen]);
     expect(result).not.toBe("frozen");
-    expect((result as [string, number])[1]).toBeLessThanOrEqual(2);
+    expect((result as [string, number])[1]).toBeLessThanOrEqual(10);
   });
 }

@@ -59,7 +59,7 @@ initInteractions({
 });
 ```
 
-The hook replaces the default rather than adding to it, so `testId: (value) => value` keeps `item-42`. Call `defaultTestIdFilter(value)` from the hook to keep its protection. The result must still be a plain identifier (`[a-zA-Z][a-zA-Z0-9_.:-]*`, at most 128 characters) or it is dropped. A hook that throws, or returns anything other than a string or `null`, drops the ID; capture continues and nothing is logged. The hook runs for each element with an ID that a snapshot walks, and on clicks and UI state changes, so keep it fast and free of side effects, and return the same answer for the same element. Pass a stable function: like `routeTemplate`, it is compared by identity when `initInteractions` is called again, and a call with a different hook gets an inactive handle.
+The hook replaces the default rather than adding to it, so `testId: (value) => value` keeps `item-42`. Call `defaultTestIdFilter(value)` from the hook to keep its protection. The result must still be a plain identifier (`[a-zA-Z][a-zA-Z0-9_.:-]*`, at most 128 characters) or it is dropped. A hook that throws, or returns anything other than a string or `null`, drops the ID; capture continues and nothing is logged. The hook runs for each element with an ID that a snapshot walks, and on clicks and UI state changes, so keep it fast and free of side effects. Pass a stable function: like `routeTemplate`, it is compared by identity when `initInteractions` is called again, and a call with a different hook gets an inactive handle.
 
 ## Correlation
 

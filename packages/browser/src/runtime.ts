@@ -157,8 +157,6 @@ export class Runtime {
   private nextTargetKey = 1;
   /** The host's `testId` hook; undefined uses `defaultTestIdFilter`. */
   private readonly testIdFilter: TestIdFilter | undefined;
-  /** Each element's last test ID as seen by the mutation observer. */
-  private observedIds = new WeakMap<Element, { key: string; id: string | undefined }>();
 
   constructor(
     private options: InteractionOptions,
@@ -488,27 +486,13 @@ export class Runtime {
     this.triggers?.routeChanged();
   }
 
-  /**
-   * The test ID for mutation evidence, running the hook once per element and
-   * attribute value. A hook that writes `aria-busy` or `disabled` queues another
-   * record from inside the observer, so calling it each time would never yield
-   * to the event loop.
-   */
-  private observedId(element: Element): string | undefined {
-    const key = `${element.getAttribute("data-interaction-id")}\0${element.getAttribute("data-testid")}`;
-    const seen = this.observedIds.get(element);
-    if (seen?.key === key) return seen.id;
-    const id = elementTestId(element, this.testIdFilter);
-    this.observedIds.set(element, { key, id });
-    return id;
-  }
-
   private startMutationEvidence(): void {
     const observerLimit = numberOption(this.options.maxMutationRecords, 50, 1000);
     this.observer = new MutationObserver((records) => {
       let remaining = observerLimit;
       let truncated = false;
       let count = 0;
+      let ranHook = false;
       const take = () => {
         if (remaining > 0) {
           remaining--;
@@ -549,6 +533,7 @@ export class Runtime {
                 'progress,[role="progressbar"],[role="status"],[aria-busy="true"]',
               )
             ) {
+              ranHook = this.testIdFilter !== undefined;
               this.record("ui.state.changed", null, {
                 feedback_type: candidate.matches('progress,[role="progressbar"]')
                   ? "progress_indicator"
@@ -556,7 +541,7 @@ export class Runtime {
                     ? "busy"
                     : "status_region",
                 phase,
-                control_id: this.observedId(candidate),
+                control_id: elementTestId(candidate, this.testIdFilter),
               });
             }
           }
@@ -578,6 +563,7 @@ export class Runtime {
         if (record.type === "attributes") {
           const name = record.attributeName;
           if (name === "aria-busy" || name === "disabled") {
+            ranHook = this.testIdFilter !== undefined;
             this.record("ui.state.changed", null, {
               feedback_type: name === "aria-busy" ? "busy" : "disabled",
               phase: (
@@ -587,7 +573,7 @@ export class Runtime {
               )
                 ? "active"
                 : "inactive",
-              control_id: this.observedId(target),
+              control_id: elementTestId(target, this.testIdFilter),
             });
           }
         }
@@ -611,6 +597,10 @@ export class Runtime {
       // At least one observation was omitted. Counting the rest would itself
       // exceed the work bound, so this is a lower bound, not a skipped-node total.
       if (truncated) this.dropped++;
+      // This callback is synchronous, so whatever is pending now was written
+      // during it: by the hook. Delivering that would run the hook again, and
+      // a hook that writes an observed attribute would never yield to the page.
+      if (ranHook) this.observer?.takeRecords();
     });
     this.observer.observe(this.root, {
       subtree: true,
