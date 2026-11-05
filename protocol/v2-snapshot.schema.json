@@ -1,0 +1,541 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/quantfive/codepress-interactions/blob/main/protocol/v2-snapshot.schema.json",
+  "title": "SnapshotBody",
+  "description": "One screen as element boxes (PUT /v2/snapshots/{sha256}, gzip when supported). sha256 is over the exact uncompressed UTF-8 bytes uploaded. Columnar: every array in `elements` has element_count entries and row i describes the same element; rows are in depth-first pre-order of the rendered (flat) tree, so a parent always precedes its children. Coordinates are CSS pixels relative to the viewport (getBoundingClientRect), rounded to 0.01. Geometry and layout facts only: no text, values, attributes other than role and safe test IDs, URLs or HTML.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "route_template",
+    "viewport",
+    "document",
+    "element_count",
+    "truncated",
+    "torn",
+    "legend",
+    "dictionaries",
+    "elements",
+    "text_boxes",
+    "hit_tests"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "route_template": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^/[A-Za-z0-9_\\-./:{}\\[\\]*()+@~]{0,255}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height",
+        "client_width",
+        "client_height",
+        "device_pixel_ratio",
+        "scroll_x",
+        "scroll_y"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "client_width": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "client_height": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "device_pixel_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "scroll_x": {
+          "type": "number",
+          "minimum": -10000000,
+          "maximum": 10000000
+        },
+        "scroll_y": {
+          "type": "number",
+          "minimum": -10000000,
+          "maximum": 10000000
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height"
+      ],
+      "properties": {
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10000000
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10000000
+        }
+      }
+    },
+    "element_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50000
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "The walk stopped at maxElements or rows were dropped to fit maxSnapshotBytes."
+    },
+    "torn": {
+      "type": "boolean",
+      "description": "The DOM, scroll position or viewport changed between slices of a multi-slice walk."
+    },
+    "legend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "flags",
+        "hit_points"
+      ],
+      "properties": {
+        "position": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "static"
+            },
+            {
+              "const": "relative"
+            },
+            {
+              "const": "absolute"
+            },
+            {
+              "const": "fixed"
+            },
+            {
+              "const": "sticky"
+            }
+          ],
+          "items": false,
+          "minItems": 5
+        },
+        "flags": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "visible",
+            "interactive",
+            "clipped",
+            "scrollable",
+            "overlay",
+            "ignored",
+            "pointer_events_none",
+            "opaque",
+            "clips_content",
+            "in_shadow"
+          ],
+          "properties": {
+            "visible": {
+              "const": 1
+            },
+            "interactive": {
+              "const": 2
+            },
+            "clipped": {
+              "const": 4
+            },
+            "scrollable": {
+              "const": 8
+            },
+            "overlay": {
+              "const": 16
+            },
+            "ignored": {
+              "const": 32
+            },
+            "pointer_events_none": {
+              "const": 64
+            },
+            "opaque": {
+              "const": 128
+            },
+            "clips_content": {
+              "const": 256
+            },
+            "in_shadow": {
+              "const": 512
+            }
+          }
+        },
+        "hit_points": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "center"
+            },
+            {
+              "const": "top_left"
+            },
+            {
+              "const": "top_right"
+            },
+            {
+              "const": "bottom_left"
+            },
+            {
+              "const": "bottom_right"
+            }
+          ],
+          "items": false,
+          "minItems": 5
+        }
+      },
+      "description": "Fixed decoding tables, repeated in every body so a body is self-describing."
+    },
+    "dictionaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tag",
+        "role",
+        "test_id"
+      ],
+      "properties": {
+        "tag": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          }
+        },
+        "role": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[a-z]{1,32}$"
+          }
+        },
+        "test_id": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}$"
+          },
+          "description": "Safe data-interaction-id or data-testid values."
+        }
+      }
+    },
+    "elements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent",
+        "tag",
+        "role",
+        "test_id",
+        "x",
+        "y",
+        "width",
+        "height",
+        "z_index",
+        "position",
+        "flags",
+        "text_length"
+      ],
+      "properties": {
+        "parent": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 49999
+          },
+          "description": "Row of the parent element, -1 for the root."
+        },
+        "tag": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49999
+          },
+          "description": "Index into dictionaries.tag."
+        },
+        "role": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 49999
+          },
+          "description": "Index into dictionaries.role (explicit role, else implicit role for common tags), -1 when none."
+        },
+        "test_id": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 49999
+          },
+          "description": "Index into dictionaries.test_id, -1 when none."
+        },
+        "x": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": -10000000,
+            "maximum": 10000000
+          }
+        },
+        "y": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": -10000000,
+            "maximum": 10000000
+          }
+        },
+        "width": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000000
+          }
+        },
+        "height": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000000
+          }
+        },
+        "z_index": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Computed z-index; null for auto."
+        },
+        "position": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "description": "Index into legend.position (computed CSS position)."
+        },
+        "flags": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1023
+          },
+          "description": "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: inside an open shadow root."
+        },
+        "text_length": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "description": "Characters in direct, non-whitespace text node children (trimmed). The text itself is never read into the body."
+        }
+      }
+    },
+    "text_boxes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "element",
+        "x",
+        "y",
+        "width",
+        "height",
+        "lines"
+      ],
+      "properties": {
+        "element": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49999
+          }
+        },
+        "x": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": -10000000,
+            "maximum": 10000000
+          }
+        },
+        "y": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": -10000000,
+            "maximum": 10000000
+          }
+        },
+        "width": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000000
+          }
+        },
+        "height": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000000
+          }
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "description": "Distinct line tops among the text's client rects."
+        }
+      },
+      "description": "For visible elements with direct text: the union box of that text's rendered client rects (from a Range). Geometry only. An element's box can overlap another while its text does not."
+    },
+    "hit_tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "element",
+        "tested",
+        "blocked",
+        "points",
+        "top"
+      ],
+      "properties": {
+        "element": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49999
+          }
+        },
+        "tested": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "description": "Points inside the viewport that elementFromPoint answered."
+        },
+        "blocked": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "description": "Tested points whose topmost element is not the control, inside it, or its label."
+        },
+        "points": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          },
+          "description": "Bitmask of blocked points, see legend.hit_points."
+        },
+        "top": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 49999
+          },
+          "description": "Row of the topmost element at the first blocked point (or its nearest recorded ancestor that does not contain the control); -1 when unknown."
+        }
+      },
+      "description": "For visible interactive elements only: elementFromPoint at the center and at the four points 25% in from each edge. elementFromPoint is never called for other elements."
+    }
+  }
+}

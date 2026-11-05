@@ -1,0 +1,179 @@
+name: Publish browser SDK
+
+# Tests and publishes @codepress/interactions-browser (packages/browser) to npm
+# with public access. A pull request runs the unit and browser tests and an
+# `npm publish --dry-run`; a push to main publishes the checked-in version when
+# npm does not have it yet. Publishing uses npm Trusted Publishing (OIDC): no
+# npm token is stored in this repository.
+
+on:
+  pull_request:
+    paths:
+      - "packages/browser/**"
+      - "protocol/**"
+      - ".github/workflows/publish-browser.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/browser/**"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Test and pack without publishing
+        type: boolean
+        default: true
+
+concurrency:
+  # PRs cancel superseded runs; a release run is never cancelled, so a publish
+  # cannot be cut off half way.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+  REGISTRY_URL: "https://registry.npmjs.org"
+  SCOPE: "@codepress"
+  PACKAGE: "@codepress/interactions-browser"
+
+jobs:
+  test:
+    name: Test and pack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: ${{ env.REGISTRY_URL }}
+          scope: ${{ env.SCOPE }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: packages/browser
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        working-directory: packages/browser
+        run: pnpm test
+
+      - name: Install Chromium
+        working-directory: packages/browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser tests
+        working-directory: packages/browser
+        run: pnpm run test:browser
+
+      - name: Build
+        working-directory: packages/browser
+        run: pnpm run build
+
+      - name: Check the packed files
+        working-directory: packages/browser
+        run: pnpm run pack:check
+
+      - name: Decide whether to publish
+        id: version
+        working-directory: packages/browser
+        env:
+          RELEASE: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          set +e
+          PUBLISHED=$(npm view "$PACKAGE" versions --json 2>"$RUNNER_TEMP/npm-view.err")
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            if grep -q "E404" "$RUNNER_TEMP/npm-view.err"; then
+              # Trusted Publishing can only be configured on a package that exists,
+              # so the first release is a one-time manual publish (see below).
+              EXISTS=false
+              PUBLISHED='[]'
+            else
+              cat "$RUNNER_TEMP/npm-view.err" >&2
+              echo "::error::Could not read $PACKAGE from the npm registry."
+              exit 1
+            fi
+          else
+            EXISTS=true
+          fi
+          if printf '%s' "$PUBLISHED" | grep -F "\"$VERSION\"" >/dev/null; then
+            echo "::notice::$PACKAGE@$VERSION is already on npm; bump the version in package.json to release a change."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ "$RELEASE" = "true" ] && [ "$EXISTS" = "false" ]; then
+            echo "::warning::$PACKAGE does not exist on npm yet, so this run does not publish it. An owner of the npm scope publishes $VERSION once by hand (pnpm run build, then npm publish --access public in packages/browser) and adds this repository and publish-browser.yml as the package's trusted publisher on npmjs.com; later versions then publish from this workflow."
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ "$RELEASE" = "true" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # npm refuses to publish over a version it already has, even as a dry
+      # run, so only a version npm does not have yet can be dry-run.
+      - name: Publish dry run
+        if: steps.version.outputs.published != 'true'
+        working-directory: packages/browser
+        run: npm publish --dry-run --ignore-scripts --access public
+
+  publish:
+    name: Publish to npm
+    needs: test
+    if: needs.test.outputs.publish == 'true' && github.ref == 'refs/heads/main'
+    # npm Trusted Publishing accepts GitHub-hosted runners only.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # OIDC Trusted Publishing: npm's trusted publisher for
+      # @codepress/interactions-browser must name this workflow on this repository.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: ${{ env.REGISTRY_URL }}
+          scope: ${{ env.SCOPE }}
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: packages/browser
+        run: pnpm run build
+
+      # Trusted Publishing needs npm >= 11.5.1.
+      - name: Ensure npm supports Trusted Publishing
+        run: npm install -g npm@^11.5.1
+
+      # This repository is public, so the release carries a provenance attestation.
+      - name: Publish
+        working-directory: packages/browser
+        run: npm publish --ignore-scripts --access public --provenance
