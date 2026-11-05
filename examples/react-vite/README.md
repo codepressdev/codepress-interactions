@@ -95,7 +95,7 @@ passes. Delete `.interactions`, reload the page, wait a few seconds and run
   rebuilds `findings.json` after every batch.
 - `src/App.tsx` starts capture with `useInteractions` from
   `@codepress/interactions-react`. The page uses `data-testid`s, so findings name
-  `plan-pro-cta` rather than a tag path.
+  test IDs such as `plan-free-cta` rather than a tag path.
 - `scripts/findings.mjs` prints `findings.json` with `formatFinding` from
   `@codepress/interactions-browser/detect`, the same function the Playwright
   helper uses for its failure message.

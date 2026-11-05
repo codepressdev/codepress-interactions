@@ -94,7 +94,8 @@ const CONTROL_CHECKS = new Set<string>(["offscreen_control", "small_tap_target"]
 
 /**
  * The finding is about a control: one of its elements is a control (a button,
- * link, field or control role), or it is a click finding on one.
+ * link, field or control role), it blocks a control inside its subject (an
+ * outer pair such as main × widget), or it is a click finding on one.
  */
 export function involvesControl(
   finding: Pick<FindingData, "check" | "evidence" | "control_id"> & { type?: string },
@@ -104,6 +105,7 @@ export function involvesControl(
     CONTROL_CHECKS.has(nameOf(finding)) ||
     evidence.subject_interactive === true ||
     evidence.other_interactive === true ||
+    (typeof evidence.subject_blocked_controls === "number" && evidence.subject_blocked_controls > 0) ||
     (typeof finding.control_id === "string" && finding.control_id !== "")
   );
 }

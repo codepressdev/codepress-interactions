@@ -25,6 +25,8 @@ First public release.
 - Sent fingerprints are remembered by recency, up to 2,000. A fingerprint found again is not resent; past the limit, the one unseen for longest is forgotten. A fingerprint found in the current run is never evicted, so a screen that keeps producing more than 2,000 findings does not resend them.
 - A sink's own requests are no longer recorded as the app's: requests started before the sink's first `await`, and any made with `context.fetch`. A same-origin sink previously made every flush record requests that caused the next flush.
 - When hit tests cannot tell which of two overlapping elements is on top (a `pointer-events: none` cover), a positioned ancestor they share no longer counts for either side. A static button inside a `position: relative` card was treated as positioned, so a badge over it could be reported as covered by the button.
+- `involvesControl` is also true when a finding blocks a control inside its subject (`subject_blocked_controls` > 0), such as `main × widget`.
+- The React and Playwright publish workflows do not publish until npm has the browser version they depend on; until then they warn and skip.
 - `sortFindings`, `formatFinding` and `involvesControl` accept `ui.finding` data as a sink receives it (`FindingData`), not only `Finding`.
 - A field joined to a form through the `form` attribute, and any label for it, is recorded on that form. A click on such a field outside any form element was previously not recorded.
 

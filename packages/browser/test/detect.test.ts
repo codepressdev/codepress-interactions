@@ -668,5 +668,9 @@ describe("wire data", () => {
     expect(sortFindings(shuffled).map((f) => f.fingerprint)).toEqual(found.map((f) => f.fingerprint));
     expect(wire.map(formatFinding)).toEqual(found.map(formatFinding));
     expect(wire.map(involvesControl)).toEqual(found.map(involvesControl));
+    // An outer pair that blocks a control inside its subject is about that control.
+    const outer = { check: "layout.overlap", control_id: null, evidence: { subject_interactive: false, other_interactive: false, subject_blocked_controls: 1 } };
+    expect(involvesControl(outer)).toBe(true);
+    expect(involvesControl({ ...outer, evidence: { ...outer.evidence, subject_blocked_controls: 0 } })).toBe(false);
   });
 });

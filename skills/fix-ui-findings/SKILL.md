@@ -42,7 +42,8 @@ Work in the SDK's sort order (`sortFindings` already applies it):
 2. Covered or clipped text: `subject_text_covered` or `text_clipped` is true.
 3. Everything else (spill, horizontal page scroll, offscreen controls, small tap
    targets, click and stability findings), those involving a control first
-   (`involvesControl`: a click finding, or `*_interactive` true).
+   (`involvesControl`: a click finding, `*_interactive` true, or
+   `subject_blocked_controls` > 0).
 4. Decorative or empty last: `*_decorative` true, both `*_has_content` false
    (image stacks, cropped images), or `subject_content_covered` false (the cover
    sits on empty space). Often intended.
