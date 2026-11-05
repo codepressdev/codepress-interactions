@@ -32,11 +32,20 @@ The default filter, `defaultTestIdFilter`, keeps an ID only when it looks static
 | `save-button`, `nav:settings`, `plan_pro_cta` | kept |
 | `item-42`, `step2` | dropped: a digit |
 | `row-3f2a9c1e-7b4d-4e8a-9c21-5d6e7f809a1b` | dropped: a digit |
-| `website-domain-row-example.com`, `checkout.pay` | dropped: a `.` |
+| `domain-row-example.com`, `checkout.pay` | dropped: a `.` |
 
 A dropped ID is treated as if the element had none. Clicks use the tag path, and findings use a structural path from the nearest ancestor with a kept ID. `data-interaction-id` follows the same rule as `data-testid`. When it is dropped, the element's `data-testid` is tried next.
 
-The filter cannot recognize every value: a slug made only of short lowercase words, such as `project-acme-launch`, looks static and is kept. If your IDs can hold slugs or names, pass a hook that allows only the IDs you know.
+The filter cannot recognize every value. A slug of short words (`project-acme-launch`), a name (`row-JaneDoe`) or a random ID with no digit looks static and is kept, and a static ID with a digit (`step2`) is dropped. If your IDs can hold slugs or names, or you need IDs the default drops, allow only the IDs you know:
+
+```ts
+const STATIC_TEST_IDS = new Set(["save-button", "nav:settings", "step2"]);
+
+initInteractions({
+  sink,
+  testId: (value) => (STATIC_TEST_IDS.has(value) ? value : null),
+});
+```
 
 The `testId` option replaces the default. It runs wherever the default would, with the attribute's value and the element. Return the value, or a static replacement, to keep it, and `null` to drop it:
 
@@ -50,7 +59,7 @@ initInteractions({
 });
 ```
 
-The hook replaces the default rather than adding to it, so `testId: (value) => value` keeps `item-42`. Call `defaultTestIdFilter(value)` from the hook to keep its protection. The result must still be a plain identifier (`[a-zA-Z][a-zA-Z0-9_.:-]*`, at most 128 characters) or it is dropped. A hook that throws, or returns anything other than a string or `null`, drops the ID; capture continues and nothing is logged. The hook runs for every element with an ID in every snapshot, so keep it fast. Pass a stable function: like `routeTemplate`, it is compared by identity when `initInteractions` is called again.
+The hook replaces the default rather than adding to it, so `testId: (value) => value` keeps `item-42`. Call `defaultTestIdFilter(value)` from the hook to keep its protection. The result must still be a plain identifier (`[a-zA-Z][a-zA-Z0-9_.:-]*`, at most 128 characters) or it is dropped. A hook that throws, or returns anything other than a string or `null`, drops the ID; capture continues and nothing is logged. The hook runs for each element with an ID that a snapshot walks, and on clicks and UI state changes, so keep it fast and free of side effects, and return the same answer for the same element. Pass a stable function: like `routeTemplate`, it is compared by identity when `initInteractions` is called again, and a call with a different hook gets an inactive handle.
 
 ## Correlation
 

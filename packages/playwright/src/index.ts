@@ -37,7 +37,9 @@ export interface CaptureOptions {
    * Test ID filter, as the browser SDK's `testId` option: return the value to
    * keep it, `null` to drop it. Replaces the default (`defaultTestIdFilter`).
    * It runs in the page, so like a `page.evaluate` callback it must be
-   * self-contained: no variables from the test file, no imports.
+   * self-contained: no variables from the test file, no imports. Using one
+   * fails the capture. To extend the default, call
+   * `globalThis.__codepressInteractions.defaultTestIdFilter(value)`.
    */
   testId?: (value: string, element: Element) => string | null;
 }
@@ -77,17 +79,38 @@ export async function captureSnapshot(page: Page, options: CaptureOptions = {}):
     const scope = globalThis as unknown as { __codepressInteractions?: Walker };
     // Indirect eval runs the bundled walker in the page's global scope.
     if (!scope.__codepressInteractions) (0, eval)(script);
+    if (testId === null) return scope.__codepressInteractions!.walk(options);
     let filter: unknown;
-    if (testId !== null) {
+    try {
+      filter = (0, eval)(`(${testId})`);
+    } catch {
       try {
-        filter = (0, eval)(`(${testId})`);
-      } catch {
         // Method shorthand (`testId(value) { … }`) is not an expression on its own.
         filter = Object.values((0, eval)(`({${testId}})`) as object)[0];
+      } catch {
+        // Bound and native functions have no source to rebuild.
       }
-      if (typeof filter !== "function") throw new Error("testId must be a self-contained function");
     }
-    return scope.__codepressInteractions!.walk({ ...options, testId: filter });
+    if (typeof filter !== "function")
+      throw new Error("testId must be a self-contained function: bound and native functions cannot run in the page");
+    const hook = filter as (value: string, element: Element) => string | null;
+    // The SDK drops an ID when a hook throws. Here a name missing from the page
+    // is a broken test setup, and dropping every ID would hide it.
+    let missing: string | null = null;
+    const body = await scope.__codepressInteractions!.walk({
+      ...options,
+      testId: (value: string, element: Element) => {
+        try {
+          return hook(value, element);
+        } catch (error) {
+          if (error instanceof ReferenceError) missing ??= error.message;
+          throw error;
+        }
+      },
+    });
+    if (missing !== null)
+      throw new Error(`testId runs in the page and must be self-contained: ${missing}`);
+    return body;
   }, args);
   const sha256 = createHash("sha256").update(JSON.stringify(body)).digest("hex");
   return { body, sha256 };

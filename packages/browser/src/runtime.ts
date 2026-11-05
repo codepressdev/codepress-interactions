@@ -157,6 +157,8 @@ export class Runtime {
   private nextTargetKey = 1;
   /** The host's `testId` hook; undefined uses `defaultTestIdFilter`. */
   private readonly testIdFilter: TestIdFilter | undefined;
+  /** Each element's last test ID as seen by the mutation observer. */
+  private observedIds = new WeakMap<Element, { key: string; id: string | undefined }>();
 
   constructor(
     private options: InteractionOptions,
@@ -407,7 +409,8 @@ export class Runtime {
       )
         path.unshift(node.tagName.toLowerCase());
       const id = crypto.randomUUID();
-      const controlId = explicit ?? path.join("/");
+      // The protocol bounds control_id at 128; the end of the path is nearest the control.
+      const controlId = explicit ?? path.join("/").slice(-128);
       this.record("interaction.started", id, {
         action: event.type,
         control_id: controlId,
@@ -485,6 +488,21 @@ export class Runtime {
     this.triggers?.routeChanged();
   }
 
+  /**
+   * The test ID for mutation evidence, running the hook once per element and
+   * attribute value. A hook that writes `aria-busy` or `disabled` queues another
+   * record from inside the observer, so calling it each time would never yield
+   * to the event loop.
+   */
+  private observedId(element: Element): string | undefined {
+    const key = `${element.getAttribute("data-interaction-id")}\0${element.getAttribute("data-testid")}`;
+    const seen = this.observedIds.get(element);
+    if (seen?.key === key) return seen.id;
+    const id = elementTestId(element, this.testIdFilter);
+    this.observedIds.set(element, { key, id });
+    return id;
+  }
+
   private startMutationEvidence(): void {
     const observerLimit = numberOption(this.options.maxMutationRecords, 50, 1000);
     this.observer = new MutationObserver((records) => {
@@ -538,8 +556,7 @@ export class Runtime {
                     ? "busy"
                     : "status_region",
                 phase,
-                control_id:
-                  elementTestId(candidate, this.testIdFilter),
+                control_id: this.observedId(candidate),
               });
             }
           }
@@ -570,8 +587,7 @@ export class Runtime {
               )
                 ? "active"
                 : "inactive",
-              control_id:
-                elementTestId(target, this.testIdFilter),
+              control_id: this.observedId(target),
             });
           }
         }

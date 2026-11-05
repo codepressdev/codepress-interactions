@@ -12,11 +12,13 @@ The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 
 - `testId` option: `(value, element) => string | null` decides which `data-interaction-id` and `data-testid` values are recorded, everywhere one is read. It replaces the default. A hook that throws, or returns anything other than a string or `null`, drops the ID. See [Test IDs and privacy](packages/browser/README.md#test-ids-and-privacy).
 - `defaultTestIdFilter` export, to call the default from a hook.
-- `@codepress/interactions-playwright`: `testId` option on `captureSnapshot`, `findIssues` and `expectNoFindings`. It runs in the page, so it must be self-contained.
+- `@codepress/interactions-playwright`: `testId` option on `captureSnapshot`, `findIssues` and `expectNoFindings`. It runs in the page, so it must be self-contained; a hook that uses a name missing from the page fails the capture. `globalThis.__codepressInteractions.defaultTestIdFilter` is there for a hook to call.
 
 ### Changed
 
 - Test IDs that look built from data are no longer recorded. With no hook, a value is dropped when it contains a `.`, or has a segment (split on `-`, `_`, `.` or `:`) that contains a digit or is longer than 32 characters. Values such as `item-42` and `row-example.com` previously left the page in the snapshot dictionary, `control_id` and `stable_id`. The fields keep their shape and are absent more often; there is no protocol change.
+- A click's tag path `control_id` is cut to the protocol's 128 characters, keeping the end nearest the control. Long custom element names could exceed it and make a batch invalid.
+- `initInteractions` no longer joins a runtime from an older copy of the SDK on the same page, which would ignore options it does not know. The second caller gets an inactive handle.
 - Findings on an element whose ID is now dropped use its structural path, so their fingerprint changes. Fingerprints in `ignoreFingerprints` lists for those elements need updating, and elements that shared a per-record pattern now share one finding.
 
 ## 1.0.0

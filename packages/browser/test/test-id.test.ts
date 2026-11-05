@@ -9,7 +9,7 @@ import {
 import { checkSnapshot } from "../src/detect";
 
 const UUID_ID = "row-3f2a9c1e-7b4d-4e8a-9c21-5d6e7f809a1b";
-const DOMAIN_ID = "website-domain-row-acme.com";
+const DOMAIN_ID = "domain-row-acme.com";
 const COUNTER_ID = "item-42";
 const KEPT = ["save-button", "nav:settings"];
 const DROPPED = [UUID_ID, DOMAIN_ID, COUNTER_ID];
@@ -148,6 +148,23 @@ describe("test IDs by default", () => {
   });
 });
 
+describe("the tag path fallback", () => {
+  it("stays within the protocol's 128 characters when an ID is dropped", async () => {
+    const tag = (name: string) => `x-${name}-${"a".repeat(26)}`;
+    const names = ["one", "two", "three", "four"].map(tag);
+    const { handle, sink } = start();
+    document.body.innerHTML =
+      names.map((name) => `<${name}>`).join("") +
+      `<button data-testid="${COUNTER_ID}">Go</button>` +
+      [...names].reverse().map((name) => `</${name}>`).join("");
+    document.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await handle.flush();
+    const id = eventsOf(sink).find((e) => e.type === "interaction.started").data.control_id as string;
+    expect(id.length).toBeLessThanOrEqual(128);
+    expect(id.endsWith("/button")).toBe(true);
+  });
+});
+
 describe("the testId hook", () => {
   it("replaces the default: returning the value unchanged keeps item-42", async () => {
     const result = await capture({ testId: (value) => value });
@@ -231,6 +248,56 @@ describe("the testId hook", () => {
     expect(result.controlIds).toEqual(["body/button", "body/button"]);
   });
 
+  it("a rejecting async hook drops the ID without reaching the page as an unhandled rejection", async () => {
+    const rejections: unknown[] = [];
+    const listener = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", listener);
+    const failing = (async () => {
+      throw new Error("hook failed");
+    }) as unknown as InteractionOptions["testId"];
+    const result = await capture({ testId: failing }, KEPT);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    process.off("unhandledRejection", listener);
+    expect(result.dictionary).toEqual([]);
+    expect(rejections).toEqual([]);
+  });
+
+  it("a hook that writes aria-busy or disabled does not keep the mutation observer running", async () => {
+    let calls = 0;
+    const { handle, sink } = start({
+      testId: (value, element) => {
+        calls++;
+        element.setAttribute("aria-busy", "false");
+        element.toggleAttribute("disabled");
+        return value;
+      },
+    });
+    mount(["save-button"]);
+    await handle.snapshot();
+    // Reached only if the event loop still runs.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await handle.flush();
+    // The walk's call and one from the observer; the observer never calls it again.
+    expect(calls).toBeLessThanOrEqual(2);
+    expect(eventsOf(sink).some((e) => e.type === "ui.state.changed" && e.data.control_id === "save-button")).toBe(true);
+  });
+
+  it("asks the hook again when the element's ID changes", async () => {
+    const { handle, sink } = start({ testId: (value) => value });
+    document.body.innerHTML = '<div data-testid="first-status"></div>';
+    const element = document.body.firstElementChild!;
+    element.setAttribute("aria-busy", "true");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    element.setAttribute("data-testid", "second-status");
+    element.setAttribute("aria-busy", "false");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await handle.flush();
+    const ids = eventsOf(sink)
+      .filter((e) => e.type === "ui.state.changed" && e.data.feedback_type === "busy" && e.data.phase !== "appeared")
+      .map((e) => e.data.control_id);
+    expect(ids).toEqual(["first-status", "second-status"]);
+  });
+
   it("is part of the shared-instance identity", () => {
     const sink = createMemorySink();
     const first = initInteractions({ sink, testId: (value) => value });
@@ -238,6 +305,19 @@ describe("the testId hook", () => {
     const second = initInteractions({ sink, testId: (value) => value });
     handles.push(second);
     expect(first.getDiagnostics().enabled).toBe(true);
+    expect(second.getDiagnostics().enabled).toBe(false);
+  });
+
+  it("does not join a runtime from an older copy, which would ignore the hook", () => {
+    const sink = createMemorySink();
+    const registry = window as unknown as Record<symbol, { signature: string; identity: unknown[] } | undefined>;
+    const key = Symbol.for("@codepress/interactions-browser/v1");
+    const first = initInteractions({ sink, flushIntervalMs: 3_600_000 });
+    handles.push(first);
+    // A 1.0.0 runtime on the same page has no testId slot.
+    registry[key]!.identity.pop();
+    const second = initInteractions({ sink, flushIntervalMs: 3_600_000, testId: () => null });
+    handles.push(second);
     expect(second.getDiagnostics().enabled).toBe(false);
   });
 });

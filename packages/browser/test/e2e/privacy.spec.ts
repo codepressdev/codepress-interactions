@@ -104,7 +104,7 @@ for (const routeSegments of [undefined, ["u", "projects", "blog"]]) {
 }
 
 // Test IDs built from data: a record UUID, a domain and a counter. Static ones survive.
-const DATA_IDS = ["row-3f2a9c1e-7b4d-4e8a-9c21-5d6e7f809a1b", "website-domain-row-acme.com", "item-42"];
+const DATA_IDS = ["row-3f2a9c1e-7b4d-4e8a-9c21-5d6e7f809a1b", "domain-row-acme.com", "item-42"];
 const STATIC_IDS = ["save-button", "nav:settings"];
 
 /**
@@ -163,3 +163,36 @@ test("a testId hook replaces the default filter", async ({ page }) => {
     expect(run.stableIds, id).toContain(id);
   }
 });
+
+for (const [name, write] of [
+  ["a constant aria-busy", 'element.setAttribute("aria-busy", "false")'],
+  ["a toggled aria-busy", 'element.setAttribute("aria-busy", String(element.getAttribute("aria-busy") !== "true"))'],
+  ["a toggled disabled", 'element.toggleAttribute("disabled")'],
+]) {
+  test(`a testId hook that writes ${name} leaves the page responsive`, async ({ page }) => {
+    await openPage(page, `<button data-testid="save-button">Go</button><p id="alive">alive</p>`);
+    await page.evaluate((write) => {
+      const w = window as any;
+      w.calls = 0;
+      const apply = (0, eval)(`(element) => { ${write}; }`);
+      w.handle = w.CodepressInteractions.initInteractions({
+        sink: w.sink,
+        flushIntervalMs: 3_600_000,
+        routeSettleMs: 3_600_000,
+        testId: (value: string, element: Element) => {
+          w.calls++;
+          apply(element);
+          return value;
+        },
+      });
+      // Not awaited: a frozen page must fail the check below, not this call.
+      void w.handle.snapshot();
+    }, write);
+    await page.waitForTimeout(300);
+    const answer = page.evaluate(() => [document.getElementById("alive")!.textContent, (window as any).calls]);
+    const frozen = new Promise<string>((resolve) => setTimeout(() => resolve("frozen"), 3000));
+    const result = await Promise.race([answer, frozen]);
+    expect(result).not.toBe("frozen");
+    expect((result as [string, number])[1]).toBeLessThanOrEqual(2);
+  });
+}

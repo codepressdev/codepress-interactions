@@ -2,10 +2,10 @@
  * The snapshot walker as a page script, for test runners that inject it into a
  * page (see @codepress/interactions-playwright). Defines
  * `globalThis.__codepressInteractions.walk(options)`, which resolves with a
- * snapshot body. Bundled to a string at build time as `PAGE_SCRIPT`.
+ * snapshot body, and `.defaultTestIdFilter` for a `testId` hook running in the page. Bundled to a string at build time as `PAGE_SCRIPT`.
  */
 import { walkSnapshot } from "./snapshot";
-import { defaultRouteTemplate, safeRoute, type TestIdFilter } from "./util";
+import { defaultRouteTemplate, defaultTestIdFilter, safeRoute, type TestIdFilter } from "./util";
 
 export interface PageWalkOptions {
   /** CSS selector of the walk root. Default: the document element. */
@@ -43,4 +43,4 @@ async function walk(options: PageWalkOptions = {}) {
   return result.body;
 }
 
-(globalThis as unknown as { __codepressInteractions?: unknown }).__codepressInteractions = { walk };
+(globalThis as unknown as { __codepressInteractions?: unknown }).__codepressInteractions = { walk, defaultTestIdFilter };

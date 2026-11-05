@@ -40,6 +40,9 @@ function filteredId(element: Element, name: string, filter: TestIdFilter): strin
   let kept: unknown;
   try {
     kept = filter(value, element);
+    // An async hook is a non-string result; its rejection must not reach the page as an app error.
+    if (typeof (kept as PromiseLike<unknown> | null)?.then === "function")
+      (kept as PromiseLike<unknown>).then(undefined, () => {});
   } catch {
     return undefined;
   }

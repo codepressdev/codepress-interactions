@@ -114,6 +114,8 @@ export function initInteractions(options: InteractionOptions): InteractionHandle
     if (existing) {
       if (
         existing.signature !== signature ||
+        // A runtime from an older copy has fewer slots: it would ignore the ones it lacks.
+        existing.identity.length !== identity.length ||
         existing.identity.some((value, index) => value !== identity[index])
       )
         return noop();
