@@ -12,11 +12,12 @@ coding agent, and prove the fix.
 
 ## Run it
 
-You need Node.js 20.19+ (or 22.12+) and npm.
+You need Node.js 20.19+ (or 22.12+) and pnpm 10.28.2.
 
 ```sh
-npm install
-npm run dev
+# From the repository root
+pnpm install
+pnpm --filter interactions-example-react-vite dev
 ```
 
 Open http://localhost:5173 in a desktop browser and wait a few seconds: the SDK
@@ -37,7 +38,7 @@ evidence, fingerprint, viewport, route template), each with `last_seen`, the
 time it was last reported. In a second terminal:
 
 ```sh
-npm run findings
+pnpm --filter interactions-example-react-vite findings
 ```
 
 prints one line per finding, most urgent first. The schemas are in
@@ -50,15 +51,16 @@ recreated on the next batch) and reload the page.
 ## Test it
 
 ```sh
-npx playwright install chromium
-npm test
+pnpm --filter interactions-example-react-vite exec playwright install chromium
+pnpm --filter interactions-example-react-vite test
 ```
 
 `tests/ui.spec.ts` opens the page at 1280x720 and calls `expectNoFindings(page)`.
 It fails, with a message that starts `Error: 1 UI finding on /.` and lists the
 finding line and its fingerprint.
 
-Playwright starts the dev server itself, or reuses the one from `npm run dev`
+Playwright starts the dev server itself, or reuses the one from
+`pnpm --filter interactions-example-react-vite dev`
 if it is running. The test closes the page before the SDK's first flush, so it
 adds nothing to `.interactions/`; load the page in a browser for that.
 
@@ -76,11 +78,11 @@ or copy that folder into your agent's skills directory. The agent reads
 proves it. Then:
 
 ```sh
-npm test
+pnpm --filter interactions-example-react-vite test
 ```
 
 passes. Delete `.interactions`, reload the page, wait a few seconds and run
-`npm run findings` again: the fingerprint is gone.
+`pnpm --filter interactions-example-react-vite findings` again: the fingerprint is gone.
 
 ## How it works
 
