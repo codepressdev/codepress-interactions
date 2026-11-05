@@ -320,23 +320,28 @@ export class Runtime {
     this.clicks.start();
     this.removals.push(() => this.clicks?.stop());
 
-    // A click on a <label> makes the browser click its control in the same task.
-    // That second click is the label's doing, not another user click.
+    // A click on a <label> makes the browser click its field in the same task.
+    // When the label click was recorded against the same control, that second
+    // click is the label's doing, not another user click. Any real input (a
+    // pointer or key press) ends the window, so a user's next click always counts.
     let labelControl: Element | null = null;
+    const endLabelWindow = () => {
+      labelControl = null;
+    };
+    for (const type of ["pointerdown", "keydown"]) {
+      document.addEventListener(type, endLabelWindow, { capture: true, passive: true });
+      this.removals.push(() => document.removeEventListener(type, endLabelWindow, { capture: true }));
+    }
     const control = (event: Event) => {
       const clicked = event.target instanceof Element ? event.target : null;
+      let forwarded: Element | null = null;
       if (event.type === "click" && clicked) {
         if (labelControl && clicked === labelControl) {
           labelControl = null;
           return;
         }
-        const forwarded = (clicked.closest("label") as HTMLLabelElement | null)?.control ?? null;
-        if (forwarded && !forwarded.contains(clicked)) {
-          labelControl = forwarded;
-          setTimeout(() => {
-            if (labelControl === forwarded) labelControl = null;
-          }, 0);
-        }
+        forwarded = (clicked.closest("label") as HTMLLabelElement | null)?.control ?? null;
+        if (forwarded?.contains(clicked)) forwarded = null;
       }
       const target = clicked ? clicked.closest(CONTROLS) : null;
       if (
@@ -364,6 +369,13 @@ export class Runtime {
         ...(event.type === "click" && clicked ? { target_key: this.targetKey(target, clicked) } : {}),
       });
       if (event.type === "click") this.clicks?.begin(id, controlId, target, event);
+      if (forwarded && forwarded.closest(CONTROLS) === target) {
+        const field = forwarded;
+        labelControl = field;
+        setTimeout(() => {
+          if (labelControl === field) labelControl = null;
+        }, 0);
+      }
     };
     listen(document, "click", control);
     listen(document, "submit", control);
@@ -373,9 +385,12 @@ export class Runtime {
     };
     listen(window, "popstate", navigation);
     listen(window, "hashchange", () => this.onRoute());
-    listen(window, "pagehide", () => {
+    listen(window, "pagehide", (event) => {
       this.clicks?.pageHidden();
       this.recordPerf();
+      // A page kept in the back-forward cache comes back: its findings still
+      // wait for a viewport. Only a page that is really going away sends them as they are.
+      if (!(event as PageTransitionEvent).persisted) this.runTimelineChecks(true);
       void this.flush(true);
     });
     listen(document, "visibilitychange", () => {
@@ -715,9 +730,9 @@ export class Runtime {
   }
 
   /**
-   * `final` (the page is going away, or capture stops) sends findings that still
-   * have no viewport rather than lose them; so does a session without snapshots,
-   * which never gets one.
+   * `final` (the page is going away for good) sends findings that still have no
+   * viewport rather than lose them; so does a session without snapshots, which
+   * never gets one.
    */
   private runTimelineChecks(final = false): void {
     if (!this.findingsEnabled || !this.active || !this.timeline.length) return;
@@ -1005,7 +1020,7 @@ export class Runtime {
     if (!this.active) return Promise.resolve();
     if (this.sending) return this.sending;
     this.recordPerf();
-    this.runTimelineChecks(keepalive);
+    this.runTimelineChecks();
     this.sending = this.send(keepalive)
       .catch(() => {
         this.lastError = "transport_error";

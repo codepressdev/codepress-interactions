@@ -294,6 +294,11 @@ const CLICKS = `
   <input type="checkbox" data-testid="c1"><input type="checkbox" data-testid="c2"><input type="checkbox" data-testid="c3">
   <label for="nick" data-testid="nick-label">Nickname</label><input id="nick" data-testid="nick">
 </form>
+<label for="go" data-testid="go-label">Go</label> <button id="go" data-testid="go">Go</button>
+<label><button data-testid="wrapped">Wrapped</button> wrapped label text</label>
+<form data-testid="busyform">
+  <label for="busyfield" id="busylabel" data-testid="busy-label">Busy label</label><br><br><input id="busyfield" data-testid="busyfield">
+</form>
 <div id="out"></div>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -306,6 +311,11 @@ const CLICKS = `
   });
   $("fail").addEventListener("click", () => fetch("/api/fail"));
   $("throw").addEventListener("click", () => { throw new Error("boom"); });
+  $("busylabel").addEventListener("click", (event) => {
+    event.preventDefault();
+    const until = performance.now() + 400;
+    while (performance.now() < until) {}
+  });
   $("busy").addEventListener("click", () => {
     const s = document.createElement("div");
     s.setAttribute("role", "progressbar");
@@ -421,6 +431,54 @@ test("rage_click: different fields of one form, a toggled checkbox and a label a
   expect(keys.slice(3, 6)).toEqual([keys[0], keys[0], keys[0]]);
   expect(checkEvents(events(out)).filter((f) => f.type === "rage_click")).toEqual([]);
   expect(findingsOf(out).filter((e) => e.data.check === "click.rage_click")).toEqual([]);
+});
+
+test("a label outside any tracked control still records its field's click", async ({ page }) => {
+  await clickPage(page);
+  // A label for a do-nothing button, and a label wrapping one: the button's click counts.
+  await clickAndSettle(page, '[data-testid="go-label"]');
+  await clickAndSettle(page, "text=wrapped label text");
+  await idle(page);
+  const out = await output(page);
+  const starts = events(out).filter((e) => e.type === "interaction.started" && e.data.action === "click");
+  expect(starts.map((e) => e.data.control_id)).toEqual(["go", "wrapped"]);
+  const dead = findingsOf(out).filter((e) => e.data.check === "click.dead_click").map((e) => e.data.control_id);
+  expect(dead.sort()).toEqual(["go", "wrapped"]);
+});
+
+test("a real click right after a slow label click is not taken for the label's forwarded click", async ({ page }) => {
+  await clickPage(page);
+  const label = (await page.locator('[data-testid="busy-label"]').boundingBox())!;
+  const field = (await page.locator('[data-testid="busyfield"]').boundingBox())!;
+  const first = page.mouse.click(label.x + 3, label.y + 3);
+  await page.waitForTimeout(60);
+  const second = page.mouse.click(field.x + 5, field.y + 5);
+  await Promise.all([first, second]);
+  await idle(page);
+  const starts = events(await output(page)).filter((e) => e.type === "interaction.started" && e.data.action === "click");
+  expect(starts).toHaveLength(2);
+  expect(starts[0].data.target_key).not.toBe(starts[1].data.target_key);
+});
+
+test("an early finding waits through a pagehide that keeps the page, and is sent once", async ({ page }) => {
+  await clickPage(page);
+  // Before the first snapshot: the burst has no viewport yet.
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-testid="dead"]') as HTMLElement;
+    for (let i = 0; i < 4; i++) button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+  });
+  await expect.poll(() => settledCount(page)).toBeGreaterThanOrEqual(4);
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await idle(page);
+  await page.evaluate(() => (window as any).handle.flush());
+  await idle(page);
+  const out = await output(page);
+  const sent = findingsOf(out).filter((e) => e.data.check === "click.rage_click");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].data.viewport_width).toBe(page.viewportSize()!.width);
+  expect(checkEvents(events(out)).filter((f) => f.type === "rage_click").map((f) => f.fingerprint)).toEqual([sent[0].data.fingerprint]);
 });
 
 test("slow_feedback, silent_failure and error_after_click", async ({ page }) => {
