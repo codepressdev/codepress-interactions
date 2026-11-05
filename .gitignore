@@ -11,3 +11,5 @@ __pycache__/
 .codepress/*
 !.codepress/verify-local/
 .codex/
+test-results/
+playwright-report/
