@@ -57,6 +57,12 @@ const MAX_FINDINGS = 2000;
 const MAX_TIMELINE = 500;
 /** What a click counts as having hit, for grouping rage clicks. */
 const TARGETS = `${INTERACTIVE},label`;
+/**
+ * HTML interactive content: a click on one of these inside a <label> is not
+ * forwarded to the label's field. Focusable spans and ARIA roles still are.
+ */
+const LABEL_INTERACTIVE =
+  "a[href],button,input:not([type=hidden]),select,textarea,label,details,embed,iframe,img[usemap],audio[controls],video[controls]";
 const TIMELINE_TYPES = new Set(["interaction.started", "ui.click.settled", "ui.state.changed", "perf.summary", "ui.snapshot"]);
 
 type EventData = EvidenceEvent["data"];
@@ -346,7 +352,7 @@ export class Runtime {
         forwarded = (label as HTMLLabelElement | null)?.control ?? null;
         // The browser forwards nothing for a click on the field itself, on other
         // interactive content inside the label (a link), or to a disabled field.
-        const inner = clicked.closest(INTERACTIVE);
+        const inner = clicked.closest(LABEL_INTERACTIVE);
         if (
           forwarded &&
           (forwarded.contains(clicked) ||

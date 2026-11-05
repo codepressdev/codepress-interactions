@@ -300,6 +300,7 @@ const CLICKS = `
   <button type="button" role="checkbox" aria-checked="false" id="terms" data-testid="terms">✓</button>
   <label for="terms" data-testid="terms-label">I accept the terms</label>
   <label for="termsnote">Note <a href="#help" data-testid="help-link">help</a></label> <input id="termsnote" data-testid="termsnote">
+  <label><input type="checkbox" data-testid="remember"> Remember me <span tabindex="0" data-testid="remember-info">(i)</span></label>
 </form>
 <form data-testid="busyform">
   <label for="busyfield" id="busylabel" data-testid="busy-label">Busy label</label><br><br><input id="busyfield" data-testid="busyfield">
@@ -479,6 +480,25 @@ test("a label for a button-type field in a form is one click on that field, and 
   expect((await starts()).map((e) => e.data.control_id)).toEqual(["terms", "terms", "terms", "help-link", "termsform"]);
   const settled = events(out).filter((e) => e.type === "ui.click.settled").slice(0, 3);
   for (const s of settled) expect(s.data.first_feedback_ms).not.toBeNull();
+  expect(checkEvents(events(out)).filter((f) => f.type === "rage_click")).toEqual([]);
+  expect(findingsOf(out).filter((e) => e.data.check === "click.rage_click")).toEqual([]);
+});
+
+test("a focusable span inside a label is still forwarded: one start per click, no rage", async ({ page }) => {
+  await clickPage(page);
+  for (let i = 0; i < 3; i++) {
+    if (i) await page.waitForTimeout(300);
+    await page.click('[data-testid="remember-info"]');
+  }
+  const starts = async () =>
+    events(await output(page)).filter((e) => e.type === "interaction.started" && e.data.action === "click");
+  await expect.poll(async () => (await starts()).length).toBe(3);
+  expect(await page.isChecked('[data-testid="remember"]')).toBe(true);
+  await idle(page);
+  await page.evaluate(() => (window as any).handle.flush());
+  await idle(page);
+  const out = await output(page);
+  expect((await starts()).map((e) => e.data.control_id)).toEqual(["termsform", "termsform", "termsform"]);
   expect(checkEvents(events(out)).filter((f) => f.type === "rage_click")).toEqual([]);
   expect(findingsOf(out).filter((e) => e.data.check === "click.rage_click")).toEqual([]);
 });
