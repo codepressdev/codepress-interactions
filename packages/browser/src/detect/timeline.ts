@@ -50,7 +50,7 @@ export function timelineFindings(
   const views = new Map<string, SnapshotView>();
   const place: Place = { route: null, width: 0, height: 0, sha256: null };
   const settled = new Map<string, Record<string, unknown>>();
-  const starts: { id: string | null; control: string; at: number; place: Place }[] = [];
+  const starts: { id: string | null; control: string; target: number | null; at: number; place: Place }[] = [];
   const busy = new Map<string, { open: number; since: number; place: Place; control: string | null; progress: boolean }>();
   let last = -Infinity;
   // Places captured before any snapshot had a viewport; the next snapshot fills them in.
@@ -125,7 +125,13 @@ export function timelineFindings(
       case "interaction.started": {
         const control = str(data.control_id);
         if (data.action === "click" && control && Number.isFinite(time))
-          starts.push({ id: event.interaction_id ?? null, control, at: time, place: snapshotPlace() });
+          starts.push({
+            id: event.interaction_id ?? null,
+            control,
+            target: Number.isInteger(data.target_key) ? (data.target_key as number) : null,
+            at: time,
+            place: snapshotPlace(),
+          });
         break;
       }
       case "ui.click.settled": {
@@ -194,13 +200,18 @@ export function timelineFindings(
   for (const run of later.splice(0)) run();
 
   if (on("rage_click")) {
-    const byControl = new Map<string, typeof starts>();
+    // Repeated clicks on one thing: the same clicked element within the same
+    // control. Clicks on different fields of one form are not a burst. Events
+    // without target_key (before 0.3.0) group by control alone.
+    const byTarget = new Map<string, typeof starts>();
     for (const start of starts) {
-      const list = byControl.get(start.control);
+      const key = `${start.control}\u0000${start.target ?? ""}`;
+      const list = byTarget.get(key);
       if (list) list.push(start);
-      else byControl.set(start.control, [start]);
+      else byTarget.set(key, [start]);
     }
-    for (const [control, list] of byControl) {
+    for (const list of byTarget.values()) {
+      const control = list[0].control;
       list.sort((a, b) => a.at - b.at);
       for (let i = 0; i < list.length; ) {
         let j = i;
@@ -209,12 +220,22 @@ export function timelineFindings(
         if (burst.length >= options.rageClickCount) {
           const data = burst.map((start) => (start.id ? settled.get(start.id) : undefined));
           const known = data.filter((d): d is Record<string, unknown> => !!d);
+          const answered = known.filter((d) => d.first_feedback_ms !== null).length;
+          // Rage is clicking again because nothing answered. A burst where every
+          // click visibly answered (a stepper, a toggle) is not that; one still
+          // settling is decided on a later run. No settled data at all (events
+          // without click follow-through) cannot say, so it is reported.
+          if (known.length && answered === known.length) {
+            i = j + 1;
+            continue;
+          }
           const route = known.find((d) => d.route_template !== undefined);
           const at: Place = { ...burst[0].place, route: route ? str(route.route_template) : burst[0].place.route };
           build("rage_click", at, control, burst[burst.length - 1].id, {
             click_count: burst.length,
             span_ms: burst[burst.length - 1].at - burst[0].at,
-            clicks_with_feedback: known.length ? known.filter((d) => d.first_feedback_ms !== null).length : null,
+            clicks_with_feedback: known.length ? answered : null,
+            clicks_settled: known.length,
             target_interactive: known.length && known.every((d) => typeof d.target_interactive === "boolean")
               ? known.some((d) => d.target_interactive === true)
               : null,

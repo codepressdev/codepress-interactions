@@ -145,6 +145,8 @@ export type LegacyData = Partial<{
   trace_id: string;
   route_template: string;
   request_label: string;
+  /** Click starts: opaque per-session key of the element clicked (0.3.0). */
+  target_key: number;
 }>;
 
 export type SnapshotTrigger = "route" | "click" | "resize" | "visible" | "manual";

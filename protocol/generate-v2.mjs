@@ -49,11 +49,15 @@ const LegacyData = {
       duration_ms: nullable(ms),
       count: nullable(count),
       request_label: nullable(str(64, LABEL)),
+      target_key: {
+        ...int(1, 1000000),
+        description: "interaction.started for a click: an opaque per-page-session number for the element clicked (the nearest control or label inside control_id, else the clicked element). Only equality is meaningful; rage_click groups by it. Absent before 0.3.0.",
+      },
     },
     [],
   ),
   description:
-    "v1 event data, unchanged except: sdk_version moved to the batch, and request_label (a bounded label returned by the host's requestLabel callback) was added.",
+    "v1 event data, unchanged except: sdk_version moved to the batch, request_label (a bounded label returned by the host's requestLabel callback) was added, and target_key was added in 0.3.0.",
 };
 const TRIGGERS = ["route", "click", "resize", "visible", "manual"];
 const THEMES = ["light", "dark", "unknown"];
@@ -236,6 +240,8 @@ const coord = num(-1e7, 1e7);
 const size = num(0, 1e7);
 const idx = int(-1, 49999);
 const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512, popover_open: 1024, ellipsis: 2048, broken_image: 4096, aria_hidden: 8192 };
+/** Flags 0.2.0 bodies do not list in their legend. */
+const LATER_FLAGS = ["popover_open", "ellipsis", "broken_image", "aria_hidden"];
 const snapshot = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: base + "v2-snapshot.schema.json",
@@ -263,7 +269,11 @@ const snapshot = {
     legend: {
       ...strict({
         position: { type: "array", prefixItems: POSITIONS.map((p) => ({ const: p })), items: false, minItems: 5 },
-        flags: strict(Object.fromEntries(Object.entries(FLAGS).map(([k, v]) => [k, { const: v }]))),
+        // Flags added after 0.2.0 are optional so older bodies still validate.
+        flags: strict(
+          Object.fromEntries(Object.entries(FLAGS).map(([k, v]) => [k, { const: v }])),
+          Object.keys(FLAGS).filter((k) => !LATER_FLAGS.includes(k)),
+        ),
         hit_points: {
           type: "array",
           prefixItems: ["center", "top_left", "top_right", "bottom_left", "bottom_right"].map((p) => ({ const: p })),

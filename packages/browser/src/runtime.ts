@@ -13,6 +13,7 @@ import {
 } from "./sink";
 import {
   CHECK_EVERY,
+  INTERACTIVE,
   encodeSnapshot,
   walkSnapshot,
   type SnapshotSummary,
@@ -54,6 +55,8 @@ const MAX_PENDING_SNAPSHOTS = 4;
 const MAX_FINDINGS = 2000;
 /** Events kept for the click and stability checks. */
 const MAX_TIMELINE = 500;
+/** What a click counts as having hit, for grouping rage clicks. */
+const TARGETS = `${INTERACTIVE},label`;
 const TIMELINE_TYPES = new Set(["interaction.started", "ui.click.settled", "ui.state.changed", "perf.summary", "ui.snapshot"]);
 
 type EventData = EvidenceEvent["data"];
@@ -122,6 +125,9 @@ export class Runtime {
   private sentFindings = new Set<string>();
   private timeline: TimelineEvent[] = [];
   private timelineScheduled = false;
+  /** Per page session: the clicked element's opaque key, so rage clicks group by element. */
+  private targetKeys = new WeakMap<Element, number>();
+  private nextTargetKey = 1;
 
   constructor(
     private options: InteractionOptions,
@@ -314,9 +320,25 @@ export class Runtime {
     this.clicks.start();
     this.removals.push(() => this.clicks?.stop());
 
+    // A click on a <label> makes the browser click its control in the same task.
+    // That second click is the label's doing, not another user click.
+    let labelControl: Element | null = null;
     const control = (event: Event) => {
-      const target =
-        event.target instanceof Element ? event.target.closest(CONTROLS) : null;
+      const clicked = event.target instanceof Element ? event.target : null;
+      if (event.type === "click" && clicked) {
+        if (labelControl && clicked === labelControl) {
+          labelControl = null;
+          return;
+        }
+        const forwarded = (clicked.closest("label") as HTMLLabelElement | null)?.control ?? null;
+        if (forwarded && !forwarded.contains(clicked)) {
+          labelControl = forwarded;
+          setTimeout(() => {
+            if (labelControl === forwarded) labelControl = null;
+          }, 0);
+        }
+      }
+      const target = clicked ? clicked.closest(CONTROLS) : null;
       if (
         !target ||
         !this.root.contains(target) ||
@@ -339,6 +361,7 @@ export class Runtime {
       this.record("interaction.started", id, {
         action: event.type,
         control_id: controlId,
+        ...(event.type === "click" && clicked ? { target_key: this.targetKey(target, clicked) } : {}),
       });
       if (event.type === "click") this.clicks?.begin(id, controlId, target, event);
     };
@@ -648,12 +671,36 @@ export class Runtime {
     });
   }
 
+  /**
+   * An opaque per-session number for what was clicked: the nearest control or
+   * label at or above the click inside the tracked control, else the clicked
+   * element. Never sent as structure; only equal or not.
+   */
+  private targetKey(control: Element, clicked: Element): number {
+    let element = clicked.closest(TARGETS);
+    if (!element || !control.contains(element)) element = clicked;
+    let key = this.targetKeys.get(element);
+    if (key === undefined) {
+      // Keys only need to differ within a rage window, so wrapping is harmless.
+      if (this.nextTargetKey > 1000000) this.nextTargetKey = 1;
+      key = this.nextTargetKey++;
+      this.targetKeys.set(element, key);
+    }
+    return key;
+  }
+
   // ---- Findings --------------------------------------------------------
 
-  /** Sends each new fingerprint once per page session. */
-  private emitFindings(findings: Finding[]): void {
+  /**
+   * Sends each new fingerprint once per page session. With `defer`, a finding
+   * whose place has no viewport yet (it happened before the first snapshot) is
+   * held back: a later run, once a snapshot has filled in its viewport, sends it
+   * with the right width band and fingerprint.
+   */
+  private emitFindings(findings: Finding[], defer = false): void {
     for (const finding of findings) {
       if (!this.active) return;
+      if (defer && !(finding.viewport_width > 0)) continue;
       if (this.sentFindings.has(finding.fingerprint)) continue;
       if (this.sentFindings.size >= MAX_FINDINGS)
         this.sentFindings.delete(this.sentFindings.values().next().value!);
@@ -667,10 +714,18 @@ export class Runtime {
     }
   }
 
-  private runTimelineChecks(): void {
+  /**
+   * `final` (the page is going away, or capture stops) sends findings that still
+   * have no viewport rather than lose them; so does a session without snapshots,
+   * which never gets one.
+   */
+  private runTimelineChecks(final = false): void {
     if (!this.findingsEnabled || !this.active || !this.timeline.length) return;
     try {
-      this.emitFindings(checkEvents(this.timeline, { ...this.options.detect, now: Date.now() }));
+      this.emitFindings(
+        checkEvents(this.timeline, { ...this.options.detect, now: Date.now() }),
+        !final && this.snapshotsEnabled,
+      );
     } catch {
       /* A check failing must never affect capture. */
     }
@@ -950,7 +1005,7 @@ export class Runtime {
     if (!this.active) return Promise.resolve();
     if (this.sending) return this.sending;
     this.recordPerf();
-    this.runTimelineChecks();
+    this.runTimelineChecks(keepalive);
     this.sending = this.send(keepalive)
       .catch(() => {
         this.lastError = "transport_error";

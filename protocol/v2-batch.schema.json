@@ -669,9 +669,15 @@
               "type": "null"
             }
           ]
+        },
+        "target_key": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "description": "interaction.started for a click: an opaque per-page-session number for the element clicked (the nearest control or label inside control_id, else the clicked element). Only equality is meaningful; rage_click groups by it. Absent before 0.3.0."
         }
       },
-      "description": "v1 event data, unchanged except: sdk_version moved to the batch, and request_label (a bounded label returned by the host's requestLabel callback) was added."
+      "description": "v1 event data, unchanged except: sdk_version moved to the batch, request_label (a bounded label returned by the host's requestLabel callback) was added, and target_key was added in 0.3.0."
     },
     "SnapshotData": {
       "type": "object",

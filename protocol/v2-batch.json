@@ -25,9 +25,9 @@
         "truncated": false,
         "torn": false,
         "bytes": 1579,
-        "walk_ms": 3.4,
+        "walk_ms": 3.5,
         "slices": 1,
-        "max_slice_ms": 3.4,
+        "max_slice_ms": 3.5,
         "theme": "light"
       }
     },
@@ -43,7 +43,7 @@
       "type": "perf.summary",
       "attribution": "unknown",
       "data": {
-        "window_ms": 11.7,
+        "window_ms": 12.3,
         "layout_shift_score": 0,
         "layout_shift_count": 0,
         "long_task_count": 0,
@@ -68,7 +68,8 @@
       "attribution": "explicit",
       "data": {
         "action": "click",
-        "control_id": "checkout.save"
+        "control_id": "checkout.save",
+        "target_key": 1
       }
     },
     {
@@ -100,7 +101,7 @@
       "data": {
         "outcome": "completed",
         "phase": "http_200",
-        "duration_ms": 6,
+        "duration_ms": 8.7,
         "trace_id": "4bf92f3577b34da6",
         "request_label": "cart.post"
       }
@@ -120,8 +121,8 @@
         "action": "click",
         "control_id": "checkout.save",
         "route_template": "/checkout/:id",
-        "first_feedback_ms": 7.5,
-        "settle_ms": 7.5,
+        "first_feedback_ms": 10.1,
+        "settle_ms": 10.1,
         "mutation_count": 1,
         "request_count": 1,
         "request_failed_count": 0,

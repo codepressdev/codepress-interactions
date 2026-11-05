@@ -441,7 +441,7 @@ function clippedText(ctx: Context): void {
   const tolerance = options.tolerancePx;
   for (const [row, boxes] of view.textBoxes) {
     if (!view.shown(row)) continue;
-    for (const text of boxes) {
+    for (const [index, text] of boxes.entries()) {
       // Walk out from the text's own element to the first clipping box it crosses.
       let clipper = -1;
       let ellipsis = false;
@@ -471,7 +471,7 @@ function clippedText(ctx: Context): void {
         clipped_bottom_px: r2(over.bottom),
         text_visible_ratio: ratio(area(intersect(text, c)), area(text)),
         text_width_px: r2(text.right - text.left),
-        lines: view.body.text_boxes.lines[view.body.text_boxes.element.indexOf(row)] ?? null,
+        lines: view.textLines.get(row)?.[index] ?? null,
         clipper_is_self: clipper === row,
       });
       break;

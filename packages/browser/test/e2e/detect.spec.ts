@@ -290,6 +290,10 @@ const CLICKS = `
 <button data-testid="throw" id="throw">Throw</button>
 <button data-testid="busy" id="busy">Busy</button>
 <button data-testid="jank" id="jank">Jank</button>
+<form data-testid="prefs">
+  <input type="checkbox" data-testid="c1"><input type="checkbox" data-testid="c2"><input type="checkbox" data-testid="c3">
+  <label for="nick" data-testid="nick-label">Nickname</label><input id="nick" data-testid="nick">
+</form>
 <div id="out"></div>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -370,17 +374,53 @@ test("dead_click: a control that does nothing; fetch, route, checkbox, focus, ne
   expect(sent[0].attribution).toBe("inferred");
 });
 
-test("rage_click: three quick clicks on one control", async ({ page }) => {
+test("rage_click: a burst right after init is sent once, with the real viewport", async ({ page }) => {
+  // Clicked before the first snapshot: the burst has no viewport until it lands.
   await clickPage(page);
   for (let i = 0; i < 4; i++) await page.click('[data-testid="dead"]', { delay: 0 });
   await expect.poll(() => settledCount(page)).toBeGreaterThanOrEqual(4);
   await idle(page);
+  await page.evaluate(() => (window as any).handle.flush());
+  await idle(page);
   const out = await output(page);
+  expectValid(out);
   const node = checkEvents(events(out)).filter((f) => f.type === "rage_click");
   expect(node).toHaveLength(1);
   expect(node[0]).toMatchObject({ control_id: "dead", fingerprint: fp("rage_click", ["dead"]) });
-  expect(node[0].evidence.click_count).toBe(4);
-  expect(findingsOf(out).map((e) => e.data.check)).toContain("click.rage_click");
+  expect(node[0].evidence).toMatchObject({ click_count: 4, clicks_with_feedback: 0, clicks_settled: 4 });
+  const sent = findingsOf(out).filter((e) => e.data.check === "click.rage_click");
+  expect(sent).toHaveLength(1);
+  expect(sent[0].data.viewport_width).toBe(page.viewportSize()!.width);
+  expect(sent[0].data).toEqual(wire(node[0]));
+});
+
+test("rage_click: different fields of one form, a toggled checkbox and a label are not rage", async ({ page }) => {
+  await clickPage(page);
+  // Three different checkboxes in one form, quickly: every click changed a value.
+  for (const id of ["c1", "c2", "c3"]) await page.click(`[data-testid="${id}"]`, { delay: 0 });
+  // The same checkbox three times: each click answered.
+  for (let i = 0; i < 3; i++) await page.click('[data-testid="c1"]', { delay: 0 });
+  await expect.poll(() => settledCount(page)).toBeGreaterThanOrEqual(6);
+  const starts = async () => events(await output(page)).filter((e) => e.type === "interaction.started" && e.data.action === "click").length;
+  const before = await starts();
+  // A label click makes the browser click its field too: that is one user click.
+  await page.click('[data-testid="nick-label"]');
+  await page.click('[data-testid="c2"]', { delay: 0 });
+  await expect.poll(starts).toBe(before + 2);
+  await idle(page);
+  await page.evaluate(() => (window as any).handle.flush());
+  await idle(page);
+  const out = await output(page);
+  expectValid(out);
+  const clicks = events(out).filter((e) => e.type === "interaction.started" && e.data.action === "click");
+  expect(clicks).toHaveLength(8);
+  expect(new Set(clicks.map((e) => e.data.control_id))).toEqual(new Set(["prefs"]));
+  // Distinct targets get distinct keys; the same checkbox keeps its key.
+  const keys = clicks.map((e) => e.data.target_key);
+  expect(new Set(keys.slice(0, 3)).size).toBe(3);
+  expect(keys.slice(3, 6)).toEqual([keys[0], keys[0], keys[0]]);
+  expect(checkEvents(events(out)).filter((f) => f.type === "rage_click")).toEqual([]);
+  expect(findingsOf(out).filter((e) => e.data.check === "click.rage_click")).toEqual([]);
 });
 
 test("slow_feedback, silent_failure and error_after_click", async ({ page }) => {

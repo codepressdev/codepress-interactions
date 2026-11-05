@@ -233,6 +233,23 @@ describe("torn and truncated snapshots", () => {
     expect(checkSnapshot(complete).map((f) => [f.type, f.subject])).toEqual([["page_h_scroll", null]]);
   });
 
+  it("clipped_text reads the clipped box's line count, and copes without lines", () => {
+    const b = body([
+      { parent: -1, box: [0, 0, 1280, 800] },
+      { parent: 0, box: [0, 0, 100, 20], flags: V | FLAGS.clips_content },
+      { parent: 1, tag: "span", box: [0, 0, 100, 20], text: [0, 0, 50, 20] },
+    ]);
+    // Two boxes on the span: the first fits, the second (three lines) is cut off.
+    b.text_boxes = { element: [2, 2], x: [0, 0], y: [0, 20], width: [50, 200], height: [20, 60], lines: [1, 3] };
+    const clipped = checkSnapshot(b).filter((f) => f.type === "clipped_text");
+    expect(clipped).toHaveLength(1);
+    expect(clipped[0].evidence.lines).toBe(3);
+    const { lines: _lines, ...noLines } = b.text_boxes;
+    const without = checkSnapshot({ ...b, text_boxes: noLines } as SnapshotBody).filter((f) => f.type === "clipped_text");
+    expect(without).toHaveLength(1);
+    expect(without[0].evidence.lines).toBeNull();
+  });
+
   it("ignores malformed rows instead of throwing", () => {
     const b = covered();
     b.elements.parent[3] = 42;
@@ -442,6 +459,45 @@ describe("click checks", () => {
     expect(types([snap(), start(0), start(200), start(1400)])).toEqual([]);
     expect(types([snap(), start(0), start(100, "other"), start(200)])).toEqual([]);
     expect(types([snap(), start(0), start(200)], { rageClickCount: 2 })).toEqual(["rage_click"]);
+  });
+
+  describe("rage clicks: the same element, and only while clicks go unanswered", () => {
+    const start = (ms: number, target: number | undefined = 1): TimelineEvent => ({
+      type: "interaction.started",
+      interaction_id: `s${ms}`,
+      occurred_at: at(ms),
+      data: { action: "click", control_id: "prefs", ...(target === undefined ? {} : { target_key: target }) },
+    });
+    const answer = (ms: number, feedback: number | null) =>
+      settled({ control_id: "prefs", first_feedback_ms: feedback, value_changed: feedback !== null }, ms + 50, `s${ms}`);
+    const rage = (events: TimelineEvent[]) => checkEvents(events).filter((f) => f.type === "rage_click");
+
+    it("groups by clicked element within the control", () => {
+      // Three different fields of one form.
+      expect(rage([snap(), start(0, 1), start(300, 2), start(600, 3)])).toEqual([]);
+      expect(rage([snap(), start(0, 1), start(300, 1), start(600, 1)])).toHaveLength(1);
+      // Events from before 0.3.0 carry no key and group by control.
+      expect(rage([snap(), start(0, undefined), start(300, undefined), start(600, undefined)])).toHaveLength(1);
+    });
+
+    it("is not rage when every click answered; is when any did not", () => {
+      const clicks = (feedback: (number | null)[]) =>
+        [snap(), ...feedback.flatMap((f, i) => [start(i * 300), answer(i * 300, f)])];
+      expect(rage(clicks([12, 8, 10]))).toEqual([]);
+      const some = rage(clicks([12, null, null]));
+      expect(some).toHaveLength(1);
+      expect(some[0].evidence).toMatchObject({ click_count: 3, clicks_with_feedback: 1, clicks_settled: 3 });
+      expect(rage(clicks([null, null, null]))[0].evidence).toMatchObject({ clicks_with_feedback: 0 });
+    });
+
+    it("waits while the answered clicks are still settling, and reports once one is unanswered", () => {
+      const early = [snap(), start(0), answer(0, 12), start(300), start(600)];
+      expect(rage(early)).toEqual([]);
+      expect(rage([...early, answer(300, 9), answer(600, 11)])).toEqual([]);
+      expect(rage([...early, answer(300, null)])[0].evidence).toMatchObject({ clicks_with_feedback: 1, clicks_settled: 2 });
+      // No follow-through at all cannot say: reported, with feedback unknown.
+      expect(rage([snap(), start(0), start(300), start(600)])[0].evidence).toMatchObject({ clicks_with_feedback: null, clicks_settled: 0 });
+    });
   });
 });
 

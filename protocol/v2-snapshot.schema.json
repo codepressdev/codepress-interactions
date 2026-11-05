@@ -175,11 +175,7 @@
             "pointer_events_none",
             "opaque",
             "clips_content",
-            "in_shadow",
-            "popover_open",
-            "ellipsis",
-            "broken_image",
-            "aria_hidden"
+            "in_shadow"
           ],
           "properties": {
             "visible": {

@@ -62,6 +62,8 @@ export class SnapshotView {
   /** Row of the overlay layer this row belongs to (a dialog, menu, tooltip, popover or scrim and its positioned wrappers), or -1. */
   readonly layer: Int32Array;
   readonly textBoxes: Map<number, Rect[]>;
+  /** Per row, the line count of each text box in `textBoxes` (same order); null when absent. */
+  readonly textLines: Map<number, (number | null)[]>;
   readonly hitRows: Map<number, number>;
   readonly documentScrolls: boolean;
   /** The page is scrolled away from its origin. */
@@ -145,6 +147,7 @@ export class SnapshotView {
     }
 
     this.textBoxes = new Map();
+    this.textLines = new Map();
     const t = body.text_boxes;
     const tn = Math.min(...(["element", "x", "y", "width", "height"] as const).map((key) => (Array.isArray(t?.[key]) ? t[key].length : 0)));
     for (let i = 0; i < tn; i++) {
@@ -156,6 +159,10 @@ export class SnapshotView {
       const list = this.textBoxes.get(row);
       if (list) list.push(rect);
       else this.textBoxes.set(row, [rect]);
+      const lines = Array.isArray(t.lines) && Number.isInteger(t.lines[i]) && t.lines[i] >= 0 ? t.lines[i] : null;
+      const counts = this.textLines.get(row);
+      if (counts) counts.push(lines);
+      else this.textLines.set(row, [lines]);
     }
     this.hitRows = new Map();
     const h = body.hit_tests;
