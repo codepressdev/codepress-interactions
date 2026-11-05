@@ -17,6 +17,7 @@ import {
   viewportBand,
   type Finding,
   type SnapshotBody,
+  type FindingData,
   type TimelineEvent,
 } from "../src/detect/index";
 import { FLAGS, HIT_POINTS, POSITIONS } from "../src/format";
@@ -390,6 +391,28 @@ describe("sorting", () => {
     expect(findingTier(pictured)).toBe(2);
   });
 
+  it("without a deciding hit test, a positioned ancestor shared by both sides does not lift either", () => {
+    // <div style="position:relative"> holding a pointer-events:none absolute badge, then a static button.
+    // The badge paints over the button; hit tests pass through the badge, so they tie.
+    const els: El[] = [
+      { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+      { parent: 0, tag: "div", box: [100, 100, 320, 400], position: "relative", testId: "card" },
+      { parent: 1, tag: "span", box: [300, 420, 100, 28], position: "absolute", flags: V | FLAGS.pointer_events_none, testId: "badge", text: [310, 424, 80, 20] },
+      { parent: 1, tag: "button", box: [120, 420, 280, 44], flags: V | I, testId: "cta", text: [200, 432, 120, 20] },
+    ];
+    const hits = [{ row: 3, tested: 5, blocked: 0, points: 0, top: -1 }];
+    const [overlap] = checkSnapshot(body(els, { hits })).filter((x) => x.type === "overlap");
+    expect(`${overlap.subject?.test_id} ${overlap.other?.test_id}`).toBe("cta badge");
+    // A positioned wrapper below the shared parent still counts for its side.
+    const wrapped: El[] = [
+      ...els.slice(0, 3),
+      { parent: 1, tag: "div", box: [120, 420, 280, 44], position: "relative", testId: "wrap" },
+      { ...els[3], parent: 3 },
+    ];
+    const [lifted] = checkSnapshot(body(wrapped, { hits: [{ row: 4, tested: 5, blocked: 0, points: 0, top: -1 }] })).filter((x) => x.type === "overlap");
+    expect(`${lifted.subject?.test_id} ${lifted.other?.test_id}`).toBe("badge wrap");
+  });
+
   it("records content and decoration as overlap and spill evidence", () => {
     const b = body([
       { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
@@ -626,5 +649,24 @@ describe("output", () => {
       for (const value of Object.values(finding.evidence))
         expect(value === null || typeof value === "boolean" || Number.isFinite(value)).toBe(true);
     }
+  });
+});
+
+describe("wire data", () => {
+  it("sortFindings, formatFinding and involvesControl take ui.finding data as a sink receives it", () => {
+    const found = sortFindings(checkSnapshot(body([
+      { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+      { parent: 0, tag: "div", box: [0, 0, 400, 300], testId: "a", text: [10, 10, 100, 20] },
+      { parent: 0, tag: "div", box: [100, 100, 400, 300], position: "absolute", testId: "b", text: [120, 120, 100, 20] },
+      { parent: 0, tag: "button", box: [600, 0, 100, 40], flags: V | I, testId: "save", text: [620, 10, 60, 20] },
+      { parent: 0, tag: "div", box: [650, 20, 100, 40], position: "absolute", testId: "tip", text: [660, 30, 60, 20] },
+    ])));
+    expect(found.length).toBeGreaterThan(1);
+    const wire: FindingData[] = JSON.parse(JSON.stringify(found.map(toFindingData)));
+    expect(wire.every((f) => !("type" in f))).toBe(true);
+    const shuffled = [...wire].reverse();
+    expect(sortFindings(shuffled).map((f) => f.fingerprint)).toEqual(found.map((f) => f.fingerprint));
+    expect(wire.map(formatFinding)).toEqual(found.map(formatFinding));
+    expect(wire.map(involvesControl)).toEqual(found.map(involvesControl));
   });
 });

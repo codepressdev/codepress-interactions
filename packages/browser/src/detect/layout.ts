@@ -244,8 +244,13 @@ function overlapFinding(ctx: Context, a: number, b: number): void {
     const za = view.stackZ(a);
     const zb = view.stackZ(b);
     if (za !== zb) top = za > zb ? a : b;
-    else if (view.isPositioned(a) !== view.isPositioned(b)) top = view.isPositioned(a) ? a : b;
-    else top = b; // Later in document order paints later.
+    else {
+      const shared = view.common(a, b).row;
+      const pa = view.isPositioned(a, shared);
+      const pb = view.isPositioned(b, shared);
+      if (pa !== pb) top = pa ? a : b;
+      else top = b; // Later in document order paints later.
+    }
   }
   const subject = top === a ? b : a;
   const other = top;

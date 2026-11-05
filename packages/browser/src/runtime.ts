@@ -102,6 +102,9 @@ export class Runtime {
   private sourceId = crypto.randomUUID();
   private context: string | null = null;
   private originalFetch = window.fetch;
+  /** Above 0 while a sink call runs synchronously: its own requests are not the app's. */
+  sinkDepth = 0;
+  private sinkFetch: typeof fetch = (input, init) => this.originalFetch.call(window, input, init);
   private requestTarget = Object.getOwnPropertyDescriptor(Request.prototype, "url")!.get!;
   private requestHeaders = Object.getOwnPropertyDescriptor(Request.prototype, "headers")!.get!;
   private wrappedFetch?: typeof fetch;
@@ -600,6 +603,15 @@ export class Runtime {
     });
   }
 
+  private inSink<T>(call: () => T): T {
+    this.sinkDepth++;
+    try {
+      return call();
+    } finally {
+      this.sinkDepth--;
+    }
+  }
+
   private requestUrl(input: string): URL | null {
     try {
       const url = new URL(input, document.baseURI);
@@ -629,7 +641,7 @@ export class Runtime {
     init: RequestInit | undefined,
     id: string | null,
   ): Promise<Response> {
-    if (!this.active) return this.originalFetch.call(window, input, init);
+    if (!this.active || this.sinkDepth) return this.originalFetch.call(window, input, init);
     // Brand-check via native Request slots, which work across realms and ignore
     // expando properties. Resolve other inputs once and send the same URL we
     // checked: inspecting one representation and sending another leaks headers.
@@ -845,7 +857,7 @@ export class Runtime {
     };
     const send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
       const entry = requests.get(this);
-      const url = runtime.active && entry ? runtime.requestUrl(entry.url) : null;
+      const url = runtime.active && entry && !runtime.sinkDepth ? runtime.requestUrl(entry.url) : null;
       if (entry && url) {
         try {
           const id =
@@ -1001,9 +1013,11 @@ export class Runtime {
         this.uploading = item;
         const result = await callSink(
           (context) =>
-            this.sink.sendSnapshot(
-              { sha256: item.sha256, body: item.body, serialized: item.serialized },
-              context,
+            this.inSink(() =>
+              this.sink.sendSnapshot(
+                { sha256: item.sha256, body: item.body, serialized: item.serialized },
+                { ...context, fetch: this.sinkFetch },
+              ),
             ),
           this.timeoutMs,
           false,
@@ -1108,7 +1122,10 @@ export class Runtime {
     const pending = this.pending;
     if (!pending || Date.now() < pending.nextAt) return;
     const result: SinkResult = await callSink(
-      (context) => this.sink.sendBatch(pending.batch, pending.serialized, context),
+      (context) =>
+        this.inSink(() =>
+          this.sink.sendBatch(pending.batch, pending.serialized, { ...context, fetch: this.sinkFetch }),
+        ),
       this.timeoutMs,
       keepalive,
       this.stopController.signal,

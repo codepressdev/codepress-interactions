@@ -896,3 +896,47 @@ test("a fixed header over a padded main is reported, with no content covered, an
   expect(covering.evidence).toMatchObject({ subject_content_covered: true, subject_text_covered: true });
   expect(findingTier(covering)).toBe(1);
 });
+
+test("a fixed widget beside main is reported against main, carrying the covered button's blocked points", async ({ page }) => {
+  const result = await scan(
+    page,
+    `<main data-testid="main" style="height:700px"><button data-testid="save" style="position:absolute;right:24px;bottom:124px;width:120px;height:40px">Save</button></main>
+     <div data-testid="chat" style="position:fixed;right:16px;bottom:116px;width:80px;height:80px;background:#36f;border-radius:40px"></div>`,
+  );
+  expectSame(result);
+  const overlaps = result.node.filter((f) => f.type === "overlap");
+  expect(overlaps.map((f) => `${f.subject?.test_id} ${f.other?.test_id}`)).toEqual(["main chat"]);
+  expect(overlaps[0].evidence.subject_blocked_points).toBeGreaterThan(0);
+  expect(overlaps[0].evidence).toMatchObject({ subject_blocked_controls: 1, subject_content_covered: true, subject_interactive: false });
+  expect(findingTier(overlaps[0])).toBe(0);
+  expect(result.node[0]).toBe(overlaps[0]);
+});
+
+test("a label click the browser does not forward, and that changes nothing, is a dead click on the label's control", async ({ page }) => {
+  await openPage(
+    page,
+    `<form data-testid="signup">
+       <label for="token" data-testid="hidden-label">Token</label><input type="hidden" id="token">
+       <label data-testid="details-label">Terms <details><summary>Read</summary><span data-testid="terms-body">Body</span></details></label>
+       <label for="off" data-testid="disabled-label">Off</label><input id="off" disabled>
+     </form>`,
+  );
+  await init(page, { clickSettleMs: 200 });
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await page.click('[data-testid="details-label"] summary');
+  await page.waitForTimeout(500);
+  await idle(page);
+  for (const id of ["hidden-label", "terms-body"]) await clickAndSettle(page, `[data-testid="${id}"]`);
+  // Playwright waits for a label's field to be enabled, so press the disabled field's label by position.
+  const box = (await page.locator('[data-testid="disabled-label"]').boundingBox())!;
+  const before = await settledCount(page);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect.poll(() => settledCount(page), { timeout: 5000 }).toBeGreaterThan(before);
+  await idle(page);
+  const out = await output(page);
+  const dead = checkEvents(events(out)).filter((f) => f.type === "dead_click");
+  expect(dead.map((f) => f.control_id)).toEqual(["signup", "signup", "signup"]);
+  for (const f of dead) expect(f.evidence.structural_id).toBe(false);
+  const settledOf = events(out).filter((e) => e.type === "ui.click.settled").slice(-3);
+  for (const e of settledOf) expect(e.data).toMatchObject({ target_interactive: true, first_feedback_ms: null });
+});

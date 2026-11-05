@@ -9,7 +9,7 @@
 import type { SnapshotBody } from "../format";
 import { layoutFindings } from "./layout";
 import { timelineFindings, type TimelineEvent } from "./timeline";
-import { CHECK_NAMES, resolveOptions, type DetectOptions, type Finding } from "./types";
+import { CHECK_NAMES, resolveOptions, type DetectOptions, type Finding, type FindingData } from "./types";
 
 export { CHECK_IDS, CHECK_NAMES, CHECK_VERSION, toFindingData } from "./types";
 export type { CheckName, DetectOptions, ElementRef, Evidence, Finding, FindingData } from "./types";
@@ -73,7 +73,7 @@ export function detect(
  *    top padding of `<main>`).
  * Earlier tiers win: a decorative layer that covers text is tier 1.
  */
-export function findingTier(finding: Pick<Finding, "evidence">): 0 | 1 | 2 | 3 {
+export function findingTier(finding: Pick<FindingData, "evidence">): 0 | 1 | 2 | 3 {
   const evidence = finding.evidence ?? {};
   for (const [key, value] of Object.entries(evidence))
     if (key.endsWith("blocked_points") && typeof value === "number" && value > 0) return 0;
@@ -85,6 +85,10 @@ export function findingTier(finding: Pick<Finding, "evidence">): 0 | 1 | 2 | 3 {
   return 2;
 }
 
+/** A finding's short check name: `type` on a `Finding`, else the last part of `check` (wire data). */
+const nameOf = (finding: Pick<FindingData, "check"> & { type?: string }): string =>
+  finding.type ?? finding.check.slice(finding.check.lastIndexOf(".") + 1);
+
 /** Checks whose subject is always a control. */
 const CONTROL_CHECKS = new Set<string>(["offscreen_control", "small_tap_target"]);
 
@@ -92,10 +96,12 @@ const CONTROL_CHECKS = new Set<string>(["offscreen_control", "small_tap_target"]
  * The finding is about a control: one of its elements is a control (a button,
  * link, field or control role), or it is a click finding on one.
  */
-export function involvesControl(finding: Pick<Finding, "type" | "evidence" | "control_id">): boolean {
+export function involvesControl(
+  finding: Pick<FindingData, "check" | "evidence" | "control_id"> & { type?: string },
+): boolean {
   const evidence = finding.evidence ?? {};
   return (
-    CONTROL_CHECKS.has(finding.type) ||
+    CONTROL_CHECKS.has(nameOf(finding)) ||
     evidence.subject_interactive === true ||
     evidence.other_interactive === true ||
     (typeof finding.control_id === "string" && finding.control_id !== "")
@@ -106,11 +112,12 @@ export function involvesControl(finding: Pick<Finding, "type" | "evidence" | "co
  * Default order: blocked controls first, then covered text, then the rest, then
  * decorative findings (see `findingTier`). Inside "the rest", findings that
  * involve a control come first (see `involvesControl`). Then by check (in
- * `CHECK_NAMES` order), then as found. Never drops a finding.
+ * `CHECK_NAMES` order), then as found. Never drops a finding. Takes `Finding`s
+ * or `ui.finding` event data as a sink receives it.
  */
-export function sortFindings<T extends Finding>(findings: readonly T[]): T[] {
+export function sortFindings<T extends FindingData>(findings: readonly T[]): T[] {
   const order = (finding: T) => {
-    const index = (CHECK_NAMES as readonly string[]).indexOf(finding.type);
+    const index = (CHECK_NAMES as readonly string[]).indexOf(nameOf(finding));
     return index < 0 ? CHECK_NAMES.length : index;
   };
   return findings
@@ -122,10 +129,10 @@ export function sortFindings<T extends Finding>(findings: readonly T[]): T[] {
     .map((entry) => entry.finding);
 }
 
-const label = (ref: Finding["subject"]): string => (ref ? ref.stable_id : "?");
+const label = (ref: FindingData["subject"]): string => (ref ? ref.stable_id : "?");
 
-/** One readable line per finding: check, elements, the evidence that ranks it, fingerprint. */
-export function formatFinding(finding: Finding): string {
+/** One readable line per finding (a `Finding` or `ui.finding` data): check, elements, the evidence that ranks it, fingerprint. */
+export function formatFinding(finding: FindingData): string {
   const who = finding.subject
     ? `${label(finding.subject)}${finding.other ? ` × ${label(finding.other)}` : ""}`
     : (finding.control_id ?? "(page)");

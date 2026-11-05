@@ -307,8 +307,14 @@ export class SnapshotView {
     return 0;
   }
 
-  isPositioned(row: number): boolean {
-    for (let at = row; at >= 0; at = this.parent[at]) if (this.position[at] !== STATIC) return true;
+  /**
+   * Whether the row, or an ancestor below `until` (exclusive), is positioned.
+   * Ancestors from the shared one up apply to both sides of a pair, so they
+   * cannot decide which one paints on top.
+   */
+  isPositioned(row: number, until = -1): boolean {
+    for (let at = row; at >= 0 && at !== until; at = this.parent[at])
+      if (this.position[at] !== STATIC) return true;
     return false;
   }
 }
