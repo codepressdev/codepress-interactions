@@ -99,3 +99,57 @@ test("captureSnapshot records the page's color scheme, or the theme it is given"
   expect((await captureSnapshot(page)).body.viewport.theme).toBe("light");
   expect((await captureSnapshot(page, { theme: "dark" })).body.viewport.theme).toBe("dark");
 });
+
+test("captureSnapshot drops data-bearing test IDs by default, and a testId hook replaces the rule", async ({ page }) => {
+  await serve(
+    page,
+    `<button data-testid="item-42">A</button><button data-testid="domain-row-acme.com">B</button><button data-testid="save-button">C</button>`,
+  );
+  expect((await captureSnapshot(page)).body.dictionaries.test_id).toEqual(["save-button"]);
+  const kept = await captureSnapshot(page, { testId: (value) => value });
+  expect(kept.body.dictionaries.test_id).toEqual(["item-42", "domain-row-acme.com", "save-button"]);
+  // The hook runs in the page and gets the element.
+  const mapped = await captureSnapshot(page, {
+    testId(value, element) {
+      return element.tagName === "BUTTON" && value.startsWith("item-") ? "item" : null;
+    },
+  });
+  expect(mapped.body.dictionaries.test_id).toEqual(["item"]);
+  const none = await captureSnapshot(page, { testId: () => null });
+  expect(none.body.dictionaries.test_id).toEqual([]);
+});
+
+test("a testId hook can call the default in the page, and gets the same result as the SDK rule", async ({ page }) => {
+  await serve(page, `<button data-testid="order-row-7">A</button><button data-testid="item-42">B</button><button data-testid="save-button">C</button>`);
+  const { body } = await captureSnapshot(page, {
+    testId: (value) =>
+      value.startsWith("order-row-")
+        ? "order-row"
+        : (globalThis as any).__codepressInteractions.defaultTestIdFilter(value),
+  });
+  expect(body.dictionaries.test_id).toEqual(["order-row", "save-button"]);
+});
+
+test("a testId hook that is not self-contained fails the capture instead of dropping every ID", async ({ page }) => {
+  await serve(page, `<button data-testid="save-button">A</button>`);
+  const allowed = new Set(["save-button"]);
+  await expect(captureSnapshot(page, { testId: (value) => (allowed.has(value) ? value : null) })).rejects.toThrow(
+    /must be self-contained.*allowed/,
+  );
+  // The walker stays usable, and a hook that throws for its own reasons only drops the ID.
+  const dropped = await captureSnapshot(page, {
+    testId: () => {
+      throw new Error("not this one");
+    },
+  });
+  expect(dropped.body.dictionaries.test_id).toEqual([]);
+});
+
+test("a bound or native testId function fails with a clear error", async ({ page }) => {
+  await serve(page, `<button data-testid="save-button">A</button>`);
+  const bound = ((value: string) => value).bind(null);
+  await expect(captureSnapshot(page, { testId: bound })).rejects.toThrow(/self-contained function/);
+  await expect(
+    captureSnapshot(page, { testId: String.prototype.trim as unknown as (value: string) => string }),
+  ).rejects.toThrow(/self-contained function/);
+});

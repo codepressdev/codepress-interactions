@@ -18,13 +18,13 @@ test("regenerate golden fixtures", async ({ page }) => {
   await openPage(
     page,
     `<header data-testid="toolbar" style="position:sticky;top:0;height:48px;background:#eee;z-index:1">
-       <button data-testid="checkout.pay" style="position:absolute;left:16px;top:8px;width:160px;height:32px">Pay now</button>
-       <div data-testid="promo.banner" style="position:absolute;left:120px;top:4px;width:140px;height:40px;background:#fc0"></div>
+       <button data-testid="checkout-pay" style="position:absolute;left:16px;top:8px;width:160px;height:32px">Pay now</button>
+       <div data-testid="promo-banner" style="position:absolute;left:120px;top:4px;width:140px;height:40px;background:#fc0"></div>
      </header>
      <main style="padding:16px">
        <h1>Checkout</h1>
        <p style="width:240px">Your order ships in two to three business days.</p>
-       <button data-testid="checkout.save" id="save">Save</button>
+       <button data-testid="checkout-save" id="save">Save</button>
      </main>
      <script>
        document.getElementById("save").addEventListener("click", async () => {
@@ -77,8 +77,8 @@ test("regenerate golden fixtures", async ({ page }) => {
   const finding = events(out).find(
     (e) => e.type === "ui.finding" && e.data.check === "layout.overlap" && e.data.snapshot_sha256 === golden.sha256,
   );
-  expect(finding?.data.subject.test_id).toBe("checkout.pay");
-  expect(finding?.data.other.test_id).toBe("promo.banner");
+  expect(finding?.data.subject.test_id).toBe("checkout-pay");
+  expect(finding?.data.other.test_id).toBe("promo-banner");
   const all = [...picked, finding].map((event, index) => ({
     ...event,
     event_id: uuid(index + 1),

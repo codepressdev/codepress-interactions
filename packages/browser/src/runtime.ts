@@ -35,6 +35,7 @@ import {
   VERSION,
   clampMs,
   defaultRouteTemplate,
+  elementTestId,
   routeSegmentSet,
   numberOption,
   safeHeaderName,
@@ -46,6 +47,7 @@ import {
   sha256Hex,
   validInteractionId,
   RecentKeys,
+  type TestIdFilter,
 } from "./util";
 
 const ATTRIBUTION = "explicit synchronous runAction only" as const;
@@ -153,6 +155,8 @@ export class Runtime {
   /** Per page session: the clicked element's opaque key, so rage clicks group by element. */
   private targetKeys = new WeakMap<Element, number>();
   private nextTargetKey = 1;
+  /** The host's `testId` hook; undefined uses `defaultTestIdFilter`. */
+  private readonly testIdFilter: TestIdFilter | undefined;
 
   constructor(
     private options: InteractionOptions,
@@ -186,6 +190,7 @@ export class Runtime {
       typeof crypto !== "undefined" &&
       typeof crypto.subtle?.digest === "function";
     this.findingsEnabled = options.findings !== false;
+    this.testIdFilter = typeof options.testId === "function" ? options.testId : undefined;
   }
 
   lease(): InteractionHandle {
@@ -392,8 +397,7 @@ export class Runtime {
       )
         return;
       const explicit =
-        safeIdentifier(target.getAttribute("data-interaction-id")) ??
-        safeIdentifier(target.getAttribute("data-testid"));
+        elementTestId(target, this.testIdFilter);
       // Non-unique structural hint: at most five ancestor tags, never a sibling scan.
       const path: string[] = [];
       for (
@@ -403,7 +407,8 @@ export class Runtime {
       )
         path.unshift(node.tagName.toLowerCase());
       const id = crypto.randomUUID();
-      const controlId = explicit ?? path.join("/");
+      // The protocol bounds control_id at 128; the end of the path is nearest the control.
+      const controlId = explicit ?? path.join("/").slice(-128);
       this.record("interaction.started", id, {
         action: event.type,
         control_id: controlId,
@@ -487,6 +492,7 @@ export class Runtime {
       let remaining = observerLimit;
       let truncated = false;
       let count = 0;
+      let ranHook = false;
       const take = () => {
         if (remaining > 0) {
           remaining--;
@@ -527,6 +533,7 @@ export class Runtime {
                 'progress,[role="progressbar"],[role="status"],[aria-busy="true"]',
               )
             ) {
+              ranHook = this.testIdFilter !== undefined;
               this.record("ui.state.changed", null, {
                 feedback_type: candidate.matches('progress,[role="progressbar"]')
                   ? "progress_indicator"
@@ -534,9 +541,7 @@ export class Runtime {
                     ? "busy"
                     : "status_region",
                 phase,
-                control_id:
-                  safeIdentifier(candidate.getAttribute("data-interaction-id")) ??
-                  safeIdentifier(candidate.getAttribute("data-testid")),
+                control_id: elementTestId(candidate, this.testIdFilter),
               });
             }
           }
@@ -558,6 +563,7 @@ export class Runtime {
         if (record.type === "attributes") {
           const name = record.attributeName;
           if (name === "aria-busy" || name === "disabled") {
+            ranHook = this.testIdFilter !== undefined;
             this.record("ui.state.changed", null, {
               feedback_type: name === "aria-busy" ? "busy" : "disabled",
               phase: (
@@ -567,9 +573,7 @@ export class Runtime {
               )
                 ? "active"
                 : "inactive",
-              control_id:
-                safeIdentifier(target.getAttribute("data-interaction-id")) ??
-                safeIdentifier(target.getAttribute("data-testid")),
+              control_id: elementTestId(target, this.testIdFilter),
             });
           }
         }
@@ -593,6 +597,10 @@ export class Runtime {
       // At least one observation was omitted. Counting the rest would itself
       // exceed the work bound, so this is a lower bound, not a skipped-node total.
       if (truncated) this.dropped++;
+      // This callback is synchronous, so whatever is pending now was written
+      // during it: by the hook. Delivering that would run the hook again, and
+      // a hook that writes an observed attribute would never yield to the page.
+      if (ranHook) this.observer?.takeRecords();
     });
     this.observer.observe(this.root, {
       subtree: true,
@@ -942,6 +950,7 @@ export class Runtime {
       routeTemplate,
       shouldAbort: () => !this.active || document.visibilityState === "hidden",
       theme: typeof this.options.theme === "function" ? this.options.theme : undefined,
+      testId: this.testIdFilter,
     });
     if (!result || !this.active) {
       this.snapshotStats.skipped++;

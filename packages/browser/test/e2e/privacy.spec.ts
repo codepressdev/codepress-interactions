@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { events, expectValid, init, openPage, output } from "./harness";
 
 // Mixed case and digits: a default route template collapses it like an ID.
@@ -100,5 +100,111 @@ for (const routeSegments of [undefined, ["u", "projects", "blog"]]) {
     expect([...routes].sort()).toEqual(
       routeSegments ? ["/:id/projects", "/blog/:id", "/u/:id"] : ["/:id/:id"],
     );
+  });
+}
+
+// Test IDs built from data: a record UUID, a domain and a counter. Static ones survive.
+const DATA_IDS = ["row-3f2a9c1e-7b4d-4e8a-9c21-5d6e7f809a1b", "domain-row-acme.com", "item-42"];
+const STATIC_IDS = ["save-button", "nav:settings"];
+
+/**
+ * Five buttons pushed off the left edge, each clicked once. Each is an
+ * offscreen_control finding; buttons without a test ID share one structural
+ * stable_id and so one fingerprint, sent once.
+ */
+async function testIdRun(page: Page, testId?: "keep-all") {
+  const ids = [...DATA_IDS, ...STATIC_IDS];
+  await openPage(
+    page,
+    ids
+      .map((id, i) => `<button data-testid="${id}" style="position:absolute;left:-300px;top:${20 + i * 40}px;width:120px;height:32px">Go</button>`)
+      .join(""),
+  );
+  await page.evaluate((keepAll) => {
+    const w = window as any;
+    w.handle = w.CodepressInteractions.initInteractions({
+      sink: w.sink,
+      flushIntervalMs: 3_600_000,
+      routeSettleMs: 3_600_000,
+      clickSettleMs: 50,
+      ...(keepAll ? { testId: (value: string) => value } : {}),
+    });
+  }, testId === "keep-all");
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await page.evaluate(() => document.querySelectorAll("button").forEach((button) => button.click()));
+  await expect.poll(async () => events(await output(page)).filter((e) => e.type === "ui.click.settled").length).toBe(5);
+  await expect.poll(async () => events(await output(page)).filter((e) => e.type === "ui.finding").length).toBe(testId ? 5 : 3);
+  const out = await output(page);
+  expectValid(out);
+  return {
+    dictionary: out.snapshots[0].body.dictionaries.test_id as string[],
+    controlIds: events(out).filter((e) => e.type === "interaction.started").map((e) => e.data.control_id as string),
+    stableIds: events(out).filter((e) => e.type === "ui.finding").map((e) => e.data.subject.stable_id as string),
+    everything: [...out.serialized, ...out.snapshots.map((s) => s.serialized)].join("\n"),
+  };
+}
+
+test("test IDs carrying data stay out of the snapshot, control_id and finding stable_id by default", async ({ page }) => {
+  const run = await testIdRun(page);
+  expect([...run.dictionary].sort()).toEqual([...STATIC_IDS].sort());
+  expect(run.controlIds.filter((id) => STATIC_IDS.includes(id)).sort()).toEqual([...STATIC_IDS].sort());
+  expect(run.stableIds.filter((id) => STATIC_IDS.includes(id)).sort()).toEqual([...STATIC_IDS].sort());
+  // The three data-bearing IDs fall back to one structural path: one finding, not three.
+  expect(run.stableIds.filter((id) => !STATIC_IDS.includes(id))).toEqual(["html/body/button"]);
+  expect(run.controlIds.filter((id) => !STATIC_IDS.includes(id))).toEqual(["body/button", "body/button", "body/button"]);
+  for (const id of [...DATA_IDS, "acme"]) expect(run.everything, id).not.toContain(id);
+});
+
+test("a testId hook replaces the default filter", async ({ page }) => {
+  const run = await testIdRun(page, "keep-all");
+  for (const id of [...DATA_IDS, ...STATIC_IDS]) {
+    expect(run.dictionary, id).toContain(id);
+    expect(run.controlIds, id).toContain(id);
+    expect(run.stableIds, id).toContain(id);
+  }
+});
+
+for (const [name, write] of [
+  ["a constant aria-busy", 'element.setAttribute("aria-busy", "false")'],
+  ["a toggled aria-busy", 'element.setAttribute("aria-busy", String(element.getAttribute("aria-busy") !== "true"))'],
+  ["a toggled disabled", 'element.toggleAttribute("disabled")'],
+  [
+    "an alternating ID and aria-busy",
+    'element.setAttribute("data-testid", window.calls % 2 ? "save-button" : "save-action"); element.setAttribute("aria-busy", String(window.calls % 2 === 0))',
+  ],
+  [
+    "a new busy element",
+    'const added = document.createElement("div"); added.setAttribute("aria-busy", "true"); added.setAttribute("data-testid", "added-region"); document.body.append(added)',
+  ],
+  [
+    "a busy clone of itself",
+    'const clone = element.cloneNode(true); clone.setAttribute("aria-busy", "true"); element.replaceWith(clone)',
+  ],
+]) {
+  test(`a testId hook that writes ${name} leaves the page responsive`, async ({ page }) => {
+    await openPage(page, `<button data-testid="save-button">Go</button><p id="alive">alive</p>`);
+    await page.evaluate((write) => {
+      const w = window as any;
+      w.calls = 0;
+      const apply = (0, eval)(`(element) => { ${write}; }`);
+      w.handle = w.CodepressInteractions.initInteractions({
+        sink: w.sink,
+        flushIntervalMs: 3_600_000,
+        routeSettleMs: 3_600_000,
+        testId: (value: string, element: Element) => {
+          w.calls++;
+          apply(element);
+          return value;
+        },
+      });
+      // Not awaited: a frozen page must fail the check below, not this call.
+      void w.handle.snapshot();
+    }, write);
+    await page.waitForTimeout(300);
+    const answer = page.evaluate(() => [document.getElementById("alive")!.textContent, (window as any).calls]);
+    const frozen = new Promise<string>((resolve) => setTimeout(() => resolve("frozen"), 3000));
+    const result = await Promise.race([answer, frozen]);
+    expect(result).not.toBe("frozen");
+    expect((result as [string, number])[1]).toBeLessThanOrEqual(10);
   });
 }

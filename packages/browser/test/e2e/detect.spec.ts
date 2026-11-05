@@ -698,13 +698,13 @@ test("content of a closed <details> is not visible, so closed accordions do not 
   const result = await scan(
     page,
     `<section style="width:600px">
-      ${[1, 2, 3].map((i) => `<details data-testid="q${i}"><summary>Question ${i}</summary><div data-testid="a${i}" style="padding:20px">Answer ${i} with a few words</div></details>`).join("")}
-      <details open data-testid="q4"><summary>Open question</summary><div data-testid="a4">Shown answer</div></details>
+      ${["one", "two", "three"].map((i) => `<details data-testid="q-${i}"><summary>Question ${i}</summary><div data-testid="a-${i}" style="padding:20px">Answer ${i} with a few words</div></details>`).join("")}
+      <details open data-testid="q-four"><summary>Open question</summary><div data-testid="a-four">Shown answer</div></details>
     </section>`,
   );
   const flag = result.body.legend.flags.visible;
-  expect(result.body.elements.flags[rowOf(result.body, "a1")] & flag).toBe(0);
-  expect(result.body.elements.flags[rowOf(result.body, "a4")] & flag).toBe(flag);
+  expect(result.body.elements.flags[rowOf(result.body, "a-one")] & flag).toBe(0);
+  expect(result.body.elements.flags[rowOf(result.body, "a-four")] & flag).toBe(flag);
   expect(result.node.filter((f) => f.type === "overlap" || f.type === "spill")).toEqual([]);
 });
 

@@ -1,7 +1,7 @@
 {
   "batch_id": "00000000-0000-4000-8000-000000000001",
   "schema_version": 2,
-  "sdk_version": "1.0.0",
+  "sdk_version": "1.1.0",
   "release": "shop-web@1.8.0",
   "events": [
     {
@@ -16,7 +16,7 @@
       "type": "ui.snapshot",
       "attribution": "unknown",
       "data": {
-        "sha256": "6f59bf03dfc81e7b4171e9125c7615d0b619e0399497ca2c88fdd3f15f822665",
+        "sha256": "5ab8efc8677a400a77164ba72f953b241e2f78dc20fcb54c00121b8b4acb7c8f",
         "trigger": "manual",
         "route_template": "/checkout/:id",
         "viewport_width": 800,
@@ -25,9 +25,9 @@
         "truncated": false,
         "torn": false,
         "bytes": 1579,
-        "walk_ms": 1.2,
+        "walk_ms": 3.9,
         "slices": 1,
-        "max_slice_ms": 1.2,
+        "max_slice_ms": 3.9,
         "theme": "light"
       }
     },
@@ -43,7 +43,7 @@
       "type": "perf.summary",
       "attribution": "unknown",
       "data": {
-        "window_ms": 4.1,
+        "window_ms": 13.4,
         "layout_shift_score": 0,
         "layout_shift_count": 0,
         "long_task_count": 0,
@@ -68,7 +68,7 @@
       "attribution": "explicit",
       "data": {
         "action": "click",
-        "control_id": "checkout.save",
+        "control_id": "checkout-save",
         "target_key": 1
       }
     },
@@ -101,7 +101,7 @@
       "data": {
         "outcome": "completed",
         "phase": "http_200",
-        "duration_ms": 14.1,
+        "duration_ms": 7.5,
         "trace_id": "4bf92f3577b34da6",
         "request_label": "cart.post"
       }
@@ -119,10 +119,10 @@
       "attribution": "inferred",
       "data": {
         "action": "click",
-        "control_id": "checkout.save",
+        "control_id": "checkout-save",
         "route_template": "/checkout/:id",
-        "first_feedback_ms": 14.7,
-        "settle_ms": 14.7,
+        "first_feedback_ms": 8.9,
+        "settle_ms": 8.9,
         "mutation_count": 1,
         "request_count": 1,
         "request_failed_count": 0,
@@ -140,8 +140,8 @@
         "overlapped": false,
         "incomplete": false,
         "end_reason": "settled",
-        "before_sha256": "6f59bf03dfc81e7b4171e9125c7615d0b619e0399497ca2c88fdd3f15f822665",
-        "after_sha256": "d7f718cd1dff1fa15dfc5fe51142b9260f7aaa313d294ef4b1455b0e89181534"
+        "before_sha256": "5ab8efc8677a400a77164ba72f953b241e2f78dc20fcb54c00121b8b4acb7c8f",
+        "after_sha256": "a7ca0f050ecae7cbd4889cfdfcbca4a8be3b24af8b02df95be123e3283122a3f"
       }
     },
     {
@@ -158,17 +158,17 @@
       "data": {
         "check": "layout.overlap",
         "check_version": 1,
-        "fingerprint": "f55f99615c9c697717efda2bf9b46734",
+        "fingerprint": "2277b3c669e11ecf600885b4b162359c",
         "route_template": "/checkout/:id",
-        "snapshot_sha256": "6f59bf03dfc81e7b4171e9125c7615d0b619e0399497ca2c88fdd3f15f822665",
+        "snapshot_sha256": "5ab8efc8677a400a77164ba72f953b241e2f78dc20fcb54c00121b8b4acb7c8f",
         "viewport_width": 800,
         "viewport_height": 600,
         "subject": {
           "index": 3,
           "tag": "button",
           "role": "button",
-          "test_id": "checkout.pay",
-          "stable_id": "checkout.pay",
+          "test_id": "checkout-pay",
+          "stable_id": "checkout-pay",
           "x": 16,
           "y": 8,
           "width": 160,
@@ -180,8 +180,8 @@
           "index": 4,
           "tag": "div",
           "role": null,
-          "test_id": "promo.banner",
-          "stable_id": "promo.banner",
+          "test_id": "promo-banner",
+          "stable_id": "promo-banner",
           "x": 120,
           "y": 4,
           "width": 140,

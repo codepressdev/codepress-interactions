@@ -27,7 +27,8 @@ export type { DetectOptions, ElementRef, Evidence, FindingData } from "./detect/
 export type { SnapshotBody, SnapshotSummary } from "./snapshot";
 export { FLAGS, HIT_POINTS, POSITIONS, THEMES } from "./snapshot";
 export type { Theme } from "./format";
-export { VERSION, defaultRouteTemplate } from "./util";
+export type { TestIdFilter } from "./util";
+export { VERSION, defaultRouteTemplate, defaultTestIdFilter } from "./util";
 
 const registryKey = Symbol.for("@codepress/interactions-browser/v1");
 type RegistryWindow = Window & { [registryKey]?: Runtime };
@@ -101,6 +102,7 @@ export function initInteractions(options: InteractionOptions): InteractionHandle
       options.sink,
       options.routeTemplate,
       options.requestLabel,
+      options.testId,
     ];
     const signature = JSON.stringify({
       ...options,
@@ -112,6 +114,8 @@ export function initInteractions(options: InteractionOptions): InteractionHandle
     if (existing) {
       if (
         existing.signature !== signature ||
+        // A runtime from an older copy has fewer slots: it would ignore the ones it lacks.
+        existing.identity.length !== identity.length ||
         existing.identity.some((value, index) => value !== identity[index])
       )
         return noop();

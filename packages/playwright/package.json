@@ -1,6 +1,6 @@
 {
   "name": "@codepress/interactions-playwright",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Playwright helpers that run the CodePress Interactions UI checks in tests: capture a snapshot, list findings, assert none",
   "license": "Apache-2.0",
   "type": "module",

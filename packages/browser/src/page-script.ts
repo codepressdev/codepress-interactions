@@ -2,10 +2,10 @@
  * The snapshot walker as a page script, for test runners that inject it into a
  * page (see @codepress/interactions-playwright). Defines
  * `globalThis.__codepressInteractions.walk(options)`, which resolves with a
- * snapshot body. Bundled to a string at build time as `PAGE_SCRIPT`.
+ * snapshot body, and `.defaultTestIdFilter` for a `testId` hook running in the page. Bundled to a string at build time as `PAGE_SCRIPT`.
  */
 import { walkSnapshot } from "./snapshot";
-import { defaultRouteTemplate, safeRoute } from "./util";
+import { defaultRouteTemplate, defaultTestIdFilter, safeRoute, type TestIdFilter } from "./util";
 
 export interface PageWalkOptions {
   /** CSS selector of the walk root. Default: the document element. */
@@ -17,6 +17,8 @@ export interface PageWalkOptions {
   routeSegments?: string[];
   /** Theme to record. Default: prefers-color-scheme (Playwright's `colorScheme` / `emulateMedia`). */
   theme?: string;
+  /** Test ID filter; replaces the default (`defaultTestIdFilter`). Must be a function created in the page. */
+  testId?: TestIdFilter;
 }
 
 async function walk(options: PageWalkOptions = {}) {
@@ -35,9 +37,10 @@ async function walk(options: PageWalkOptions = {}) {
     routeTemplate: route,
     shouldAbort: () => false,
     theme: options.theme === undefined ? undefined : () => options.theme,
+    testId: typeof options.testId === "function" ? options.testId : undefined,
   });
   if (!result) throw new Error("snapshot walk was abandoned");
   return result.body;
 }
 
-(globalThis as unknown as { __codepressInteractions?: unknown }).__codepressInteractions = { walk };
+(globalThis as unknown as { __codepressInteractions?: unknown }).__codepressInteractions = { walk, defaultTestIdFilter };

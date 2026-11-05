@@ -135,7 +135,7 @@ describe("options", () => {
     const good = start({ release: "app@2.4.0+sha.1a2b" });
     good.handle.runAction("x", () => {});
     await good.handle.flush();
-    expect(good.sink.batches[0]).toMatchObject({ schema_version: 2, sdk_version: "1.0.0", release: "app@2.4.0+sha.1a2b" });
+    expect(good.sink.batches[0]).toMatchObject({ schema_version: 2, sdk_version: "1.1.0", release: "app@2.4.0+sha.1a2b" });
     good.handle.shutdown();
     const bad = start({ release: "has spaces and <html>" });
     bad.handle.runAction("x", () => {});
