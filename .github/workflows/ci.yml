@@ -59,6 +59,10 @@ jobs:
         working-directory: packages/playwright
         run: pnpm run build && pnpm run pack:check
 
+      - name: Check the packed files (React adapter)
+        working-directory: packages/react
+        run: pnpm run build && pnpm run pack:check
+
   python:
     name: Python tests and lint
     runs-on: ubuntu-24.04

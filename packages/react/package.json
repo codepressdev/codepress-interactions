@@ -25,7 +25,8 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean --external react",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "pack:check": "node scripts/pack-check.mjs"
   },
   "dependencies": {
     "@codepress/interactions-browser": "workspace:^"
@@ -40,5 +41,12 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "keywords": [
+    "react",
+    "telemetry",
+    "layout-checks",
+    "interaction"
+  ],
+  "sideEffects": false
 }
