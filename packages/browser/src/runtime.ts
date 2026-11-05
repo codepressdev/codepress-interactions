@@ -35,6 +35,7 @@ import {
   VERSION,
   clampMs,
   defaultRouteTemplate,
+  elementTestId,
   routeSegmentSet,
   numberOption,
   safeHeaderName,
@@ -46,6 +47,7 @@ import {
   sha256Hex,
   validInteractionId,
   RecentKeys,
+  type TestIdFilter,
 } from "./util";
 
 const ATTRIBUTION = "explicit synchronous runAction only" as const;
@@ -153,6 +155,8 @@ export class Runtime {
   /** Per page session: the clicked element's opaque key, so rage clicks group by element. */
   private targetKeys = new WeakMap<Element, number>();
   private nextTargetKey = 1;
+  /** The host's `testId` hook; undefined uses `defaultTestIdFilter`. */
+  private readonly testIdFilter: TestIdFilter | undefined;
 
   constructor(
     private options: InteractionOptions,
@@ -186,6 +190,7 @@ export class Runtime {
       typeof crypto !== "undefined" &&
       typeof crypto.subtle?.digest === "function";
     this.findingsEnabled = options.findings !== false;
+    this.testIdFilter = typeof options.testId === "function" ? options.testId : undefined;
   }
 
   lease(): InteractionHandle {
@@ -392,8 +397,7 @@ export class Runtime {
       )
         return;
       const explicit =
-        safeIdentifier(target.getAttribute("data-interaction-id")) ??
-        safeIdentifier(target.getAttribute("data-testid"));
+        elementTestId(target, this.testIdFilter);
       // Non-unique structural hint: at most five ancestor tags, never a sibling scan.
       const path: string[] = [];
       for (
@@ -535,8 +539,7 @@ export class Runtime {
                     : "status_region",
                 phase,
                 control_id:
-                  safeIdentifier(candidate.getAttribute("data-interaction-id")) ??
-                  safeIdentifier(candidate.getAttribute("data-testid")),
+                  elementTestId(candidate, this.testIdFilter),
               });
             }
           }
@@ -568,8 +571,7 @@ export class Runtime {
                 ? "active"
                 : "inactive",
               control_id:
-                safeIdentifier(target.getAttribute("data-interaction-id")) ??
-                safeIdentifier(target.getAttribute("data-testid")),
+                elementTestId(target, this.testIdFilter),
             });
           }
         }
@@ -942,6 +944,7 @@ export class Runtime {
       routeTemplate,
       shouldAbort: () => !this.active || document.visibilityState === "hidden",
       theme: typeof this.options.theme === "function" ? this.options.theme : undefined,
+      testId: this.testIdFilter,
     });
     if (!result || !this.active) {
       this.snapshotStats.skipped++;

@@ -1,8 +1,23 @@
 # Changelog
 
-All three npm packages (`@codepress/interactions-browser`, `@codepress/interactions-react`, `@codepress/interactions-playwright`) share one version. 1.0.0 is the first release published to npm; earlier versions were developed in this repository only. Versions follow [Semantic Versioning](https://semver.org): within 1.x, options, exports and protocol v2 fields are only added, never removed or changed in meaning. A check whose meaning changes gets a new `check_version`.
+The three npm packages (`@codepress/interactions-browser`, `@codepress/interactions-react`, `@codepress/interactions-playwright`) were released together at 1.0.0; a later release bumps only the packages whose code changed. 1.0.0 is the first release published to npm; earlier versions were developed in this repository only. Versions follow [Semantic Versioning](https://semver.org): within 1.x, options, exports and protocol v2 fields are only added, never removed or changed in meaning. A check whose meaning changes gets a new `check_version`.
 
 The Python SDK in `python/` is versioned separately and is not covered by 1.0.
+
+## 1.1.0
+
+`@codepress/interactions-browser` and `@codepress/interactions-playwright`. `@codepress/interactions-react` has no code change and stays at 1.0.0; its `^1.0.0` dependency picks up this browser release, and its `InteractionOptions` type gains `testId`.
+
+### Added
+
+- `testId` option: `(value, element) => string | null` decides which `data-interaction-id` and `data-testid` values are recorded, everywhere one is read. It replaces the default. A hook that throws, or returns anything other than a string or `null`, drops the ID. See [Test IDs and privacy](packages/browser/README.md#test-ids-and-privacy).
+- `defaultTestIdFilter` export, to call the default from a hook.
+- `@codepress/interactions-playwright`: `testId` option on `captureSnapshot`, `findIssues` and `expectNoFindings`. It runs in the page, so it must be self-contained.
+
+### Changed
+
+- Test IDs that look built from data are no longer recorded. With no hook, a value is dropped when it contains a `.`, or has a segment (split on `-`, `_`, `.` or `:`) that contains a digit or is longer than 32 characters. Values such as `item-42` and `row-example.com` previously left the page in the snapshot dictionary, `control_id` and `stable_id`. The fields keep their shape and are absent more often; there is no protocol change.
+- Findings on an element whose ID is now dropped use its structural path, so their fingerprint changes. Fingerprints in `ignoreFingerprints` lists for those elements need updating, and elements that shared a per-record pattern now share one finding.
 
 ## 1.0.0
 

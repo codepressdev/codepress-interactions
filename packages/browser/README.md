@@ -14,9 +14,43 @@ const interactions = initInteractions({
 
 The endpoint is the service base URL; the SDK sends protocol v2 batches to `/v2/batches` and snapshot bodies to `/v2/snapshots/{sha256}` ([schemas](https://github.com/quantfive/codepress-interactions/blob/main/protocol)). Use `sink` instead of `endpoint` to send evidence anywhere else (see [Sinks](#sinks)). The public key resolves project/environment on the service. `environment` is a local diagnostic configuration label and never grants authority. Service origin admission and lease configuration must already permit this installation. API origins default to this page's origin. Add a separate API origin explicitly only if it is controlled by your application and permits `X-Interaction-Id` in its CORS configuration.
 
-Initial setup captures clicks on semantic controls (including dynamically mounted controls), form submissions, navigation signals, bounded structural DOM changes, and allowed-origin fetch/XHR observations. It does not require per-control annotations. Control identifiers use safe `data-interaction-id`/`data-testid` values when present, otherwise an at-most-five-tag ancestry hint. This fallback is not unique and never scans sibling collections. These identifiers are structural hints and can change when layouts change. Mark private subtrees `data-interactions-exclude`. Do not put user data or secrets in explicit tracking identifiers.
+Initial setup captures clicks on semantic controls (including dynamically mounted controls), form submissions, navigation signals, bounded structural DOM changes, and allowed-origin fetch/XHR observations. It does not require per-control annotations. Control identifiers use `data-interaction-id`/`data-testid` values that pass the [test ID filter](#test-ids-and-privacy), otherwise an at-most-five-tag ancestry hint. This fallback is not unique and never scans sibling collections. These identifiers are structural hints and can change when layouts change. Mark private subtrees `data-interactions-exclude`. Do not put user data or secrets in explicit tracking identifiers.
 
 No DOM text, HTML, input values, request/response bodies, URL paths, queries, cookies or user IDs are recorded. Mutation evidence reports changed-record counts, not a replay or an assertion that a spinner represents business completion. HTTP statuses are bounded `data.phase` labels such as `http_201`; browser request outcomes are `completed`/`error`, never server business outcomes. No durable browser storage is used.
+
+## Test IDs and privacy
+
+A test ID is often built from data: `row-${record.id}`, `domain-row-${hostname}`. Recorded as is, it would carry that data off the page, and one per-record ID would split one finding into many. So every `data-interaction-id` and `data-testid` goes through a filter before it is used anywhere: the snapshot `test_id` dictionary, a click's `control_id`, `control_id` on UI state events, and a finding's `stable_id` and fingerprint.
+
+The default filter, `defaultTestIdFilter`, keeps an ID only when it looks static. It drops a value that:
+
+- contains a `.`, or
+- has a segment (split on `-`, `_`, `.` or `:`) that contains a digit or is longer than 32 characters.
+
+| Value | Default |
+| --- | --- |
+| `save-button`, `nav:settings`, `plan_pro_cta` | kept |
+| `item-42`, `step2` | dropped: a digit |
+| `row-3f2a9c1e-7b4d-4e8a-9c21-5d6e7f809a1b` | dropped: a digit |
+| `website-domain-row-example.com`, `checkout.pay` | dropped: a `.` |
+
+A dropped ID is treated as if the element had none. Clicks use the tag path, and findings use a structural path from the nearest ancestor with a kept ID. `data-interaction-id` follows the same rule as `data-testid`. When it is dropped, the element's `data-testid` is tried next.
+
+The filter cannot recognize every value: a slug made only of short lowercase words, such as `project-acme-launch`, looks static and is kept. If your IDs can hold slugs or names, pass a hook that allows only the IDs you know.
+
+The `testId` option replaces the default. It runs wherever the default would, with the attribute's value and the element. Return the value, or a static replacement, to keep it, and `null` to drop it:
+
+```ts
+import { defaultTestIdFilter, initInteractions } from "@codepress/interactions-browser";
+
+initInteractions({
+  sink,
+  // Collapse per-record rows into one ID, and use the default for the rest.
+  testId: (value) => (value.startsWith("order-row-") ? "order-row" : defaultTestIdFilter(value)),
+});
+```
+
+The hook replaces the default rather than adding to it, so `testId: (value) => value` keeps `item-42`. Call `defaultTestIdFilter(value)` from the hook to keep its protection. The result must still be a plain identifier (`[a-zA-Z][a-zA-Z0-9_.:-]*`, at most 128 characters) or it is dropped. A hook that throws, or returns anything other than a string or `null`, drops the ID; capture continues and nothing is logged. The hook runs for every element with an ID in every snapshot, so keep it fast. Pass a stable function: like `routeTemplate`, it is compared by identity when `initInteractions` is called again.
 
 ## Correlation
 
@@ -101,7 +135,7 @@ These are reported as measured. Each finding carries the evidence that says what
 - **A label click that the browser does not forward, and that changes nothing, is a dead click.** A click on label content the browser does not forward to the field (a nested button, a link, the body of a `<details>`, an `<img usemap>` with an empty map), or on a label for a hidden or disabled field, is a click of its own. When nothing happens it gives `dead_click` on the label's control (for example the form), with `target_interactive: true` because a label counts as a control. A label for a disabled field gives the same.
 - **A field joined to another form belongs to that form.** A field with the `form` attribute, and any label for it, is recorded on the form it joins, wherever it sits in the DOM: one label click is one `interaction.started` on that form.
 
-The fingerprint is 32 hex characters of SHA-256 over the check, the route template, the viewport width band and the elements' `stable_id`, never coordinates, scroll offsets or text. It is the same for the same bug at another scroll offset, in another session or on another machine. `stable_id` is the test ID or, when there is none, a structural tag path from the nearest ancestor with a test ID (`#cart/div/button`); evidence `subject_structural_id` / `structural_id` says so. Structural paths change when the markup does, and siblings with the same tags share one.
+The fingerprint is 32 hex characters of SHA-256 over the check, the route template, the viewport width band and the elements' `stable_id`, never coordinates, scroll offsets or text. It is the same for the same bug at another scroll offset, in another session or on another machine. `stable_id` is the test ID or, when there is none or it was [filtered out](#test-ids-and-privacy), a structural tag path from the nearest ancestor with a test ID (`#cart/div/button`); evidence `subject_structural_id` / `structural_id` says so. Structural paths change when the markup does, and siblings with the same tags share one.
 
 ```ts
 import { checkEvents, checkSnapshot, formatFinding } from "@codepress/interactions-browser/detect";
@@ -167,6 +201,7 @@ const sink: InteractionSink = {
 | `release` | none | Bounded release label sent with every batch. |
 | `routeSegments` | none | Static lowercase path words the default route template keeps, e.g. `["orders", "items"]`. |
 | `routeTemplate(url)` | every path segment `:id` unless in `routeSegments`; no query or hash | Return a bounded route label such as `/orders/[id]`. Values with a query or unsafe characters are dropped. |
+| `testId(value, element)` | `defaultTestIdFilter` | Which test IDs are recorded; see [Test IDs and privacy](#test-ids-and-privacy). |
 | `requestLabel(url, init)` | none | Bounded static label for an observed request (`[A-Za-z0-9_.:/-]`, 64 characters). |
 | `propagateHeader` | `X-Interaction-Id` | Correlation header name for allowed origins; `false` sends none. A readable `X-Trace-Id` response header is recorded. |
 | `snapshots` | `true` | Turn screen snapshots off. |

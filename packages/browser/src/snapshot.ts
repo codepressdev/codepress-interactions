@@ -5,7 +5,7 @@
  */
 import { FLAGS, HIT_POINTS, POSITIONS, THEMES, type SnapshotBody, type Theme } from "./format";
 import type { SnapshotTrigger } from "./types";
-import { now, safeIdentifier } from "./util";
+import { elementTestId, now, type TestIdFilter } from "./util";
 
 export { FLAGS, HIT_POINTS, POSITIONS, THEMES } from "./format";
 export type { SnapshotBody } from "./format";
@@ -41,6 +41,8 @@ export interface WalkOptions {
   shouldAbort: () => boolean;
   /** The theme actually showing, when the app has its own toggle. Default: prefers-color-scheme. */
   theme?: () => unknown;
+  /** Test ID filter (the `testId` option). Default: `defaultTestIdFilter`. */
+  testId?: TestIdFilter;
 }
 
 export interface WalkResult {
@@ -323,10 +325,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     elements.tag.push(tags.get(tagOf(element)));
     elements.role.push(roles.get(role));
     elements.test_id.push(
-      testIds.get(
-        safeIdentifier(element.getAttribute("data-interaction-id")) ??
-          safeIdentifier(element.getAttribute("data-testid")),
-      ),
+      testIds.get(elementTestId(element, options.testId)),
     );
     elements.x.push(r2(rect.left));
     elements.y.push(r2(rect.top));

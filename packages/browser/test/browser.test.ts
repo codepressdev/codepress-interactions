@@ -41,7 +41,7 @@ describe("initialization capture", () => {
   it("captures dynamically mounted semantic control without exposing private content", async () => {
     const handle = init();
     document.body.innerHTML =
-      '<button data-testid="transfer.confirm"><span>Secret customer text</span></button><input value="password"><div data-interactions-exclude><button>Secret</button></div>';
+      '<button data-testid="transfer-confirm"><span>Secret customer text</span></button><input value="password"><div data-interactions-exclude><button>Secret</button></div>';
     document
       .querySelector("span")!
       .dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -56,7 +56,7 @@ describe("initialization capture", () => {
     expect(
       events().find((event) => event.type === "interaction.started").data
         .control_id,
-    ).toBe("transfer.confirm");
+    ).toBe("transfer-confirm");
     expect(JSON.stringify(batches())).not.toMatch(/Secret|password|innerHTML/);
     expect(
       events().some(
@@ -315,7 +315,7 @@ describe("mutation callback work budget", () => {
         const tree = document.createElement("section");
         tree.innerHTML =
           shape === "excluded siblings"
-            ? '<div data-interactions-exclude><progress data-testid="private.indicator"></progress></div>'.repeat(
+            ? '<div data-interactions-exclude><progress data-testid="private-indicator"></progress></div>'.repeat(
                 5000,
               ) + "<progress></progress>"
             : "<progress></progress>".repeat(
@@ -411,7 +411,7 @@ describe("mutation callback work budget", () => {
         ).length,
       ).toBeLessThanOrEqual(limit);
       expect(JSON.stringify(batches())).not.toMatch(
-        /private.indicator|private text/,
+        /private-indicator|private text/,
       );
       if (shape === "excluded siblings" || shape === "text siblings") {
         expect(

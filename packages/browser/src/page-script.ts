@@ -5,7 +5,7 @@
  * snapshot body. Bundled to a string at build time as `PAGE_SCRIPT`.
  */
 import { walkSnapshot } from "./snapshot";
-import { defaultRouteTemplate, safeRoute } from "./util";
+import { defaultRouteTemplate, safeRoute, type TestIdFilter } from "./util";
 
 export interface PageWalkOptions {
   /** CSS selector of the walk root. Default: the document element. */
@@ -17,6 +17,8 @@ export interface PageWalkOptions {
   routeSegments?: string[];
   /** Theme to record. Default: prefers-color-scheme (Playwright's `colorScheme` / `emulateMedia`). */
   theme?: string;
+  /** Test ID filter; replaces the default (`defaultTestIdFilter`). Must be a function created in the page. */
+  testId?: TestIdFilter;
 }
 
 async function walk(options: PageWalkOptions = {}) {
@@ -35,6 +37,7 @@ async function walk(options: PageWalkOptions = {}) {
     routeTemplate: route,
     shouldAbort: () => false,
     theme: options.theme === undefined ? undefined : () => options.theme,
+    testId: typeof options.testId === "function" ? options.testId : undefined,
   });
   if (!result) throw new Error("snapshot walk was abandoned");
   return result.body;

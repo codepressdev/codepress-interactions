@@ -41,6 +41,7 @@ Options (all optional):
 | `routeSegments` | `[]` | literal path segments kept in the default route template (others become `:id`) |
 | `maxElements` | 50000 | element limit |
 | `theme` | the page's `prefers-color-scheme` | `"light"`, `"dark"` or `"unknown"` to record, for apps with their own theme toggle (Playwright's `colorScheme` / `page.emulateMedia` set the default) |
+| `testId` | `defaultTestIdFilter` | `(value, element) => string \| null`: which `data-interaction-id` / `data-testid` values to record, as the browser SDK's [`testId` option](https://github.com/quantfive/codepress-interactions/blob/main/packages/browser/README.md#test-ids-and-privacy). It runs in the page, so it must be self-contained, like a `page.evaluate` callback. Pass the same rule your app uses so fingerprints match production; `(value) => value` keeps every ID |
 | `ignoreFingerprints` | `[]` | fingerprints to leave out (known findings accepted for now) |
 | `events` | none | protocol v2 events to run the click and stability checks over too |
 | `checks` and thresholds | see [detect options](https://github.com/quantfive/codepress-interactions/blob/main/packages/browser/README.md#ui-checks) | |

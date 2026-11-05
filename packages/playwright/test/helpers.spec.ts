@@ -99,3 +99,22 @@ test("captureSnapshot records the page's color scheme, or the theme it is given"
   expect((await captureSnapshot(page)).body.viewport.theme).toBe("light");
   expect((await captureSnapshot(page, { theme: "dark" })).body.viewport.theme).toBe("dark");
 });
+
+test("captureSnapshot drops data-bearing test IDs by default, and a testId hook replaces the rule", async ({ page }) => {
+  await serve(
+    page,
+    `<button data-testid="item-42">A</button><button data-testid="website-domain-row-acme.com">B</button><button data-testid="save-button">C</button>`,
+  );
+  expect((await captureSnapshot(page)).body.dictionaries.test_id).toEqual(["save-button"]);
+  const kept = await captureSnapshot(page, { testId: (value) => value });
+  expect(kept.body.dictionaries.test_id).toEqual(["item-42", "website-domain-row-acme.com", "save-button"]);
+  // The hook runs in the page and gets the element.
+  const mapped = await captureSnapshot(page, {
+    testId(value, element) {
+      return element.tagName === "BUTTON" && value.startsWith("item-") ? "item" : null;
+    },
+  });
+  expect(mapped.body.dictionaries.test_id).toEqual(["item"]);
+  const none = await captureSnapshot(page, { testId: () => null });
+  expect(none.body.dictionaries.test_id).toEqual([]);
+});

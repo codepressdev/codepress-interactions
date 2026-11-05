@@ -32,7 +32,7 @@ To see it end to end, run [`examples/react-vite`](examples/react-vite): a small 
 
 ## What is captured
 
-- **Clicks and submits** on semantic controls (buttons, links, fields, ARIA roles, labels), including controls mounted later. No per-control annotations. A control is identified by its `data-interaction-id` or `data-testid` when it has one, otherwise by a short tag path.
+- **Clicks and submits** on semantic controls (buttons, links, fields, ARIA roles, labels), including controls mounted later. No per-control annotations. A control is identified by its `data-interaction-id` or `data-testid` when it has a static one, otherwise by a short tag path. IDs that look built from data (`item-42`, `row-example.com`) are [dropped by default](packages/browser/README.md#test-ids-and-privacy).
 - **What followed each click** until the page went quiet: time to first visible feedback, DOM mutation counts, requests and their outcome, route changes, dialogs, focus moves, layout shift, long tasks, errors, and hashes of the screen before and after.
 - **Screen snapshots** after a route settles, a click settles, a resize settles or the tab comes back: every rendered element's box, tag, role, safe test ID, z-index, CSS position, flags (visible, interactive, clipped, opaque, overlay, ...), the length of its own text, the boxes its text occupies, and hit tests for controls.
 - **Route templates**, never URLs: every path segment becomes `:id` unless you list it as a static word.

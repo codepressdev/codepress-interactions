@@ -75,6 +75,19 @@ export interface InteractionOptions {
    * is recorded as "unknown". Default: the user's `prefers-color-scheme`.
    */
   theme?: () => Theme;
+  /**
+   * Decides which `data-interaction-id` / `data-testid` values are recorded,
+   * wherever one is read: the snapshot `test_id` dictionary, a click's
+   * `control_id`, UI state events, and so a finding's `stable_id` and
+   * fingerprint. Return the value (or a static replacement) to keep it, `null`
+   * to drop it; the element is then identified by its tag path, as if it had
+   * no test ID. A throw or a non-string result drops the ID. The
+   * result must still be a plain identifier (`[a-zA-Z][a-zA-Z0-9_.:-]*`, at
+   * most 128 characters). Replaces the default, `defaultTestIdFilter`, which
+   * drops values containing a `.` or a segment with a digit or more than 32
+   * characters; call it from the hook to extend it.
+   */
+  testId?: (value: string, element: Element) => string | null;
 }
 
 export interface Diagnostics {

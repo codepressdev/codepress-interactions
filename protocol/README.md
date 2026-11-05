@@ -19,7 +19,7 @@ Every event has the same envelope: `event_id`, `interaction_id` (the click or ac
 
 | `type` | `data` |
 | --- | --- |
-| `interaction.started` | A click or submit: `action`, `control_id` (a safe test ID or a short tag path) and, for clicks, `target_key` (an opaque per-session number for the element clicked; only equality means anything). |
+| `interaction.started` | A click or submit: `action`, `control_id` (a test ID that passed the SDK's filter, or a short tag path) and, for clicks, `target_key` (an opaque per-session number for the element clicked; only equality means anything). |
 | `ui.click.settled` | What followed a click until the page went quiet: time to first feedback, settle time, mutation, request, failure, error and long task counts, layout shift, whether the route changed, a dialog opened, focus moved, a value changed, a field took focus, the selection changed or a new tab opened, and the screen hashes before and after. |
 | `ui.snapshot` | A snapshot was taken: its `sha256`, trigger, route template, viewport, theme, element count, size, and walk timing. The body itself travels separately. |
 | `ui.finding` | A check matched (see below). |

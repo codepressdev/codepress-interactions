@@ -1,4 +1,4 @@
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 
 export const numberOption = (
   value: number | undefined,
@@ -12,6 +12,49 @@ export const numberOption = (
 /** Static developer identifiers only (data-testid style). */
 export const safeIdentifier = (value: string | null | undefined): string | undefined =>
   value && /^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}$/.test(value) ? value : undefined;
+
+/**
+ * Decides which `data-interaction-id` / `data-testid` values may be recorded:
+ * return the value (or a static replacement) to keep it, `null` to drop it.
+ */
+export type TestIdFilter = (value: string, element: Element) => string | null;
+
+/**
+ * The default test ID filter. Drops any value that contains a `.` (domains,
+ * file names, versions), and any value with a segment (split on `-`, `_`, `.`
+ * or `:`) that contains a digit or is longer than 32 characters (record IDs,
+ * UUIDs, hashes, counters). Keeps `save-button` and `nav:settings`; drops
+ * `item-42`, `row-3f2a9c1e-…` and `domain-row-example.com`.
+ */
+export function defaultTestIdFilter(value: string, _element?: Element): string | null {
+  if (typeof value !== "string" || value.includes(".")) return null;
+  for (const segment of value.split(/[-_:]/))
+    if (segment.length > 32 || /[0-9]/.test(segment)) return null;
+  return value;
+}
+
+/** Reads one ID attribute through the filter. A throw or a non-string result drops it. */
+function filteredId(element: Element, name: string, filter: TestIdFilter): string | undefined {
+  const value = element.getAttribute(name);
+  if (!value) return undefined;
+  let kept: unknown;
+  try {
+    kept = filter(value, element);
+  } catch {
+    return undefined;
+  }
+  return typeof kept === "string" ? safeIdentifier(kept) : undefined;
+}
+
+/**
+ * The element's recorded test ID: `data-interaction-id`, else `data-testid`,
+ * each passed through `filter` (default `defaultTestIdFilter`) and then the
+ * identifier shape check. Undefined when neither survives.
+ */
+export function elementTestId(element: Element, filter?: TestIdFilter): string | undefined {
+  const use = typeof filter === "function" ? filter : defaultTestIdFilter;
+  return filteredId(element, "data-interaction-id", use) ?? filteredId(element, "data-testid", use);
+}
 
 export const safeLabel = (value: unknown, max = 64): string | undefined =>
   typeof value === "string" &&

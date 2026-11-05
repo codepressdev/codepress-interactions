@@ -33,6 +33,13 @@ export interface CaptureOptions {
   maxElements?: number;
   /** Theme to record when the app has its own toggle. Default: the page's prefers-color-scheme (`colorScheme` in the Playwright config, or `page.emulateMedia`). */
   theme?: "light" | "dark" | "unknown";
+  /**
+   * Test ID filter, as the browser SDK's `testId` option: return the value to
+   * keep it, `null` to drop it. Replaces the default (`defaultTestIdFilter`).
+   * It runs in the page, so like a `page.evaluate` callback it must be
+   * self-contained: no variables from the test file, no imports.
+   */
+  testId?: (value: string, element: Element) => string | null;
 }
 
 export interface Snapshot {
@@ -64,12 +71,23 @@ export async function captureSnapshot(page: Page, options: CaptureOptions = {}):
       maxElements: options.maxElements,
       theme: options.theme,
     },
+    testId: typeof options.testId === "function" ? String(options.testId) : null,
   };
-  const body = await page.evaluate(async ({ script, options }) => {
+  const body = await page.evaluate(async ({ script, options, testId }) => {
     const scope = globalThis as unknown as { __codepressInteractions?: Walker };
     // Indirect eval runs the bundled walker in the page's global scope.
     if (!scope.__codepressInteractions) (0, eval)(script);
-    return scope.__codepressInteractions!.walk(options);
+    let filter: unknown;
+    if (testId !== null) {
+      try {
+        filter = (0, eval)(`(${testId})`);
+      } catch {
+        // Method shorthand (`testId(value) { … }`) is not an expression on its own.
+        filter = Object.values((0, eval)(`({${testId}})`) as object)[0];
+      }
+      if (typeof filter !== "function") throw new Error("testId must be a self-contained function");
+    }
+    return scope.__codepressInteractions!.walk({ ...options, testId: filter });
   }, args);
   const sha256 = createHash("sha256").update(JSON.stringify(body)).digest("hex");
   return { body, sha256 };
