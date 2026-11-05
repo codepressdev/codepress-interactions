@@ -2,3 +2,4 @@ packages:
   - packages/browser
   - packages/react
   - packages/playwright
+  - examples/react-vite

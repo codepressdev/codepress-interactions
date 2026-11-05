@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "bootstrapped_at": "2026-11-05T11:12:23Z",
+  "discovery_branch": "codepress/bootstrap/dev-server/aa03cab1378046d1",
+  "frontends": [
+    {
+      "label": "react-vite",
+      "description": "Example pricing page that records browser interaction evidence and UI findings locally.",
+      "working_dir": "examples/react-vite",
+      "dockerfile_path": ".codepress/dev-server/Dockerfile.react-vite",
+      "dev_command": "pnpm exec vite --host \"$CODEPRESS_BIND_HOST\" --port \"$PORT\" --strictPort",
+      "prebuild_command": "pnpm --filter @codepress/interactions-browser run build && pnpm --filter @codepress/interactions-react run build",
+      "prebuild_inputs": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "packages/browser/package.json",
+        "packages/browser/src",
+        "packages/browser/tsconfig.json",
+        "packages/browser/tsup.config.ts",
+        "packages/browser/scripts/build-page-script.mjs",
+        "packages/react/package.json",
+        "packages/react/src",
+        "packages/react/tsconfig.json"
+      ],
+      "framework": "vite",
+      "package_manager": "pnpm",
+      "install_command": "pnpm install --frozen-lockfile",
+      "dependency_manifests": [
+        "pnpm-lock.yaml"
+      ],
+      "dev_port": 5173,
+      "system_packages": [
+        "procps"
+      ],
+      "size": "small"
+    }
+  ]
+}

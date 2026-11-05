@@ -11,13 +11,13 @@
     "test": "playwright test"
   },
   "dependencies": {
-    "@codepress/interactions-browser": "^1.0.0",
-    "@codepress/interactions-react": "^1.0.0",
+    "@codepress/interactions-browser": "workspace:^",
+    "@codepress/interactions-react": "workspace:^",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@codepress/interactions-playwright": "^1.0.0",
+    "@codepress/interactions-playwright": "workspace:^",
     "@playwright/test": "^1.64.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
