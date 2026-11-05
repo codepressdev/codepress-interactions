@@ -1,7 +1,7 @@
 {
   "batch_id": "00000000-0000-4000-8000-000000000001",
   "schema_version": 2,
-  "sdk_version": "0.2.0",
+  "sdk_version": "0.3.0",
   "release": "shop-web@1.8.0",
   "events": [
     {
@@ -16,7 +16,7 @@
       "type": "ui.snapshot",
       "attribution": "unknown",
       "data": {
-        "sha256": "63cd76a8f7c0d7ffda05281011eea5b2491e70fc819714f8aefe947c8a6ec3f6",
+        "sha256": "c1d742f10b207f324738766dfb048ea233737d1ea02351eefea9ed429894bc06",
         "trigger": "manual",
         "route_template": "/checkout/:id",
         "viewport_width": 800,
@@ -24,10 +24,10 @@
         "element_count": 9,
         "truncated": false,
         "torn": false,
-        "bytes": 1465,
-        "walk_ms": 2.9,
+        "bytes": 1544,
+        "walk_ms": 3.5,
         "slices": 1,
-        "max_slice_ms": 2.9
+        "max_slice_ms": 3.5
       }
     },
     {
@@ -42,7 +42,7 @@
       "type": "perf.summary",
       "attribution": "unknown",
       "data": {
-        "window_ms": 10.7,
+        "window_ms": 14.3,
         "layout_shift_score": 0,
         "layout_shift_count": 0,
         "long_task_count": 0,
@@ -99,7 +99,7 @@
       "data": {
         "outcome": "completed",
         "phase": "http_200",
-        "duration_ms": 7.8,
+        "duration_ms": 7.5,
         "trace_id": "4bf92f3577b34da6",
         "request_label": "cart.post"
       }
@@ -119,8 +119,8 @@
         "action": "click",
         "control_id": "checkout.save",
         "route_template": "/checkout/:id",
-        "first_feedback_ms": 9.4,
-        "settle_ms": 9.4,
+        "first_feedback_ms": 9.3,
+        "settle_ms": 9.3,
         "mutation_count": 1,
         "request_count": 1,
         "request_failed_count": 0,
@@ -130,11 +130,15 @@
         "route_changed": false,
         "dialog_opened": false,
         "focus_moved": false,
+        "target_interactive": true,
+        "value_changed": false,
+        "field_focused": false,
+        "new_context": false,
         "overlapped": false,
         "incomplete": false,
         "end_reason": "settled",
-        "before_sha256": "63cd76a8f7c0d7ffda05281011eea5b2491e70fc819714f8aefe947c8a6ec3f6",
-        "after_sha256": "b76a13874c7f95330ea58bdda469d5d13d4f52733c52c3ae6ba0b62991328460"
+        "before_sha256": "c1d742f10b207f324738766dfb048ea233737d1ea02351eefea9ed429894bc06",
+        "after_sha256": "1d67094b0ab49636cf602b086ad532fc27d0e5568d5e2994d52e5f603feeabd8"
       }
     },
     {
@@ -147,13 +151,13 @@
       "sequence": 7,
       "occurred_at": "2026-11-01T12:00:00.300Z",
       "type": "ui.finding",
-      "attribution": "inferred",
+      "attribution": "unknown",
       "data": {
-        "check": "hit.blocked",
+        "check": "layout.overlap",
         "check_version": 1,
-        "fingerprint": "9c1185a5c5e9fc54",
+        "fingerprint": "f55f99615c9c697717efda2bf9b46734",
         "route_template": "/checkout/:id",
-        "snapshot_sha256": "63cd76a8f7c0d7ffda05281011eea5b2491e70fc819714f8aefe947c8a6ec3f6",
+        "snapshot_sha256": "c1d742f10b207f324738766dfb048ea233737d1ea02351eefea9ed429894bc06",
         "viewport_width": 800,
         "viewport_height": 600,
         "subject": {
@@ -161,6 +165,7 @@
           "tag": "button",
           "role": "button",
           "test_id": "checkout.pay",
+          "stable_id": "checkout.pay",
           "x": 16,
           "y": 8,
           "width": 160,
@@ -173,6 +178,7 @@
           "tag": "div",
           "role": null,
           "test_id": "promo.banner",
+          "stable_id": "promo.banner",
           "x": 120,
           "y": 4,
           "width": 140,
@@ -180,13 +186,29 @@
           "position": "absolute",
           "z_index": null
         },
+        "control_id": null,
         "evidence": {
-          "blocked_points": 2,
-          "tested_points": 5,
-          "overlap_px": 2560,
-          "overlap_ratio": 0.5,
-          "text_overlap_px": 0,
-          "same_stacking_context": true
+          "overlap_px": 1792,
+          "overlap_width_px": 56,
+          "overlap_height_px": 32,
+          "subject_covered_ratio": 0.35,
+          "other_covered_ratio": 0.32,
+          "subject_blocked_points": 2,
+          "subject_tested_points": 5,
+          "subject_blocked_controls": 1,
+          "center_blocked": false,
+          "subject_text_covered": true,
+          "subject_text_overlap_px": 23.4,
+          "other_text_overlap_px": 0,
+          "paint_order_from_hit_test": true,
+          "subject_overlay": false,
+          "other_overlay": false,
+          "other_pointer_events_none": false,
+          "subject_depth_to_common": 1,
+          "other_depth_to_common": 1,
+          "common_parent_positioned": true,
+          "subject_structural_id": false,
+          "other_structural_id": false
         }
       }
     }

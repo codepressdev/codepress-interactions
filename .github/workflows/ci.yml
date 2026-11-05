@@ -33,7 +33,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The React adapter type-checks against the browser package's built types.
+      # The React adapter and the Playwright helpers type-check against the
+      # browser package's built types.
       - name: Build browser package
         run: pnpm --filter @codepress/interactions-browser build
 
@@ -53,6 +54,10 @@ jobs:
       - name: Check the packed files
         working-directory: packages/browser
         run: pnpm run pack:check
+
+      - name: Check the packed files (Playwright helpers)
+        working-directory: packages/playwright
+        run: pnpm run build && pnpm run pack:check
 
   python:
     name: Python tests and lint

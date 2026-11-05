@@ -3,80 +3,12 @@
  * geometry and layout facts in a columnar body. Never records text, values,
  * attributes other than role/test IDs, URLs or HTML.
  */
+import { FLAGS, HIT_POINTS, POSITIONS, type SnapshotBody } from "./format";
 import type { SnapshotTrigger } from "./types";
 import { now, safeIdentifier } from "./util";
 
-export const POSITIONS = ["static", "relative", "absolute", "fixed", "sticky"] as const;
-
-/** Bit values of `elements.flags`. */
-export const FLAGS = {
-  visible: 1,
-  interactive: 2,
-  clipped: 4,
-  scrollable: 8,
-  overlay: 16,
-  ignored: 32,
-  pointer_events_none: 64,
-  opaque: 128,
-  clips_content: 256,
-  in_shadow: 512,
-} as const;
-
-/** Bit values of `hit_tests.points`: center, then the four inset points. */
-export const HIT_POINTS = ["center", "top_left", "top_right", "bottom_left", "bottom_right"] as const;
-
-export interface SnapshotBody {
-  schema_version: 2;
-  route_template: string | null;
-  viewport: {
-    width: number;
-    height: number;
-    client_width: number;
-    client_height: number;
-    device_pixel_ratio: number;
-    scroll_x: number;
-    scroll_y: number;
-  };
-  document: { width: number; height: number };
-  element_count: number;
-  truncated: boolean;
-  torn: boolean;
-  legend: {
-    position: typeof POSITIONS;
-    flags: typeof FLAGS;
-    hit_points: typeof HIT_POINTS;
-  };
-  dictionaries: { tag: string[]; role: string[]; test_id: string[] };
-  elements: {
-    parent: number[];
-    tag: number[];
-    role: number[];
-    test_id: number[];
-    x: number[];
-    y: number[];
-    width: number[];
-    height: number[];
-    z_index: (number | null)[];
-    position: number[];
-    flags: number[];
-    text_length: number[];
-  };
-  text_boxes: {
-    element: number[];
-    x: number[];
-    y: number[];
-    width: number[];
-    height: number[];
-    lines: number[];
-  };
-  hit_tests: {
-    element: number[];
-    tested: number[];
-    blocked: number[];
-    points: number[];
-    top: number[];
-  };
-}
+export { FLAGS, HIT_POINTS, POSITIONS } from "./format";
+export type { SnapshotBody } from "./format";
 
 export interface SnapshotSummary {
   sha256: string;
@@ -127,7 +59,8 @@ const SKIP_TAGS = new Set([
 const OPAQUE_TAGS = new Set(["CANVAS", "IFRAME", "FRAME", "EMBED", "OBJECT", "VIDEO"]);
 /** Recorded as one box; internals are not layout of interest (or have no boxes). */
 const LEAF_TAGS = new Set(["svg", "SVG", "MATH", "math", "SELECT", "PICTURE", "AUDIO"]);
-const INTERACTIVE = [
+/** Enabled-or-not controls: focusable/clickable elements and control roles. */
+export const INTERACTIVE = [
   "a[href]", "button", 'input:not([type="hidden"])', "select", "textarea", "summary",
   "[tabindex]:not([tabindex='-1'])", '[contenteditable=""]', '[contenteditable="true"]',
   ...[
@@ -162,7 +95,6 @@ interface Frame {
   parent: number;
   clip: Rect | null;
   opacity: number;
-  shadow: boolean;
 }
 
 const r2 = (value: number): number => {
@@ -247,6 +179,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     device_pixel_ratio: r2(window.devicePixelRatio || 1),
     scroll_x: r2(window.scrollX),
     scroll_y: r2(window.scrollY),
+    coarse_pointer: coarsePointer(),
   };
   const tags = new Dictionary();
   const roles = new Dictionary();
@@ -279,7 +212,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
   document.addEventListener("scroll", markTorn, { capture: true, passive: true });
 
   const stack: Frame[] = [
-    { next: root, list: null, index: 0, parent: -1, clip: null, opacity: 1, shadow: false },
+    { next: root, list: null, index: 0, parent: -1, clip: null, opacity: 1 },
   ];
   // The root itself is visited once: stop the sibling chain after it.
   let rootPending = true;
@@ -333,7 +266,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
       !(element as HTMLButtonElement).disabled &&
       !element.closest("fieldset:disabled");
     const visible =
-      hasArea && style.visibility === "visible" && opacity > 0.01 && !fullyClipped;
+      hasArea && style.visibility === "visible" && opacity > 0.01 && !fullyClipped && rendered(element);
     const contentClip = clipsOverflow(style);
     const scrollable =
       /auto|scroll|overlay/.test(style.overflowX + style.overflowY) &&
@@ -342,12 +275,13 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     const position = Math.max(0, POSITIONS.indexOf(style.position as (typeof POSITIONS)[number]));
     const z = style.zIndex === "auto" ? null : parseInt(style.zIndex, 10);
     const zIndex = z === null || !Number.isFinite(z) ? null : Math.max(-2147483648, Math.min(2147483647, z));
+    const popoverOpen = safeMatches(element, ":popover-open");
     const overlay =
       style.position === "fixed" ||
       (style.position === "absolute" && zIndex !== null && zIndex > 0) ||
       (role !== null && OVERLAY_ROLES.has(role)) ||
       (element.tagName === "DIALOG" && element.hasAttribute("open")) ||
-      safeMatches(element, ":popover-open");
+      popoverOpen;
 
     let flags = 0;
     if (visible) flags |= FLAGS.visible;
@@ -359,7 +293,23 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     if (style.pointerEvents === "none") flags |= FLAGS.pointer_events_none;
     if (opaque) flags |= FLAGS.opaque;
     if (contentClip) flags |= FLAGS.clips_content;
-    if (frame.shadow) flags |= FLAGS.in_shadow;
+    // From the element's own tree, not the walk: slotted light-DOM content is
+    // walked under its slot but lives in the host's tree.
+    if (typeof ShadowRoot === "function" && element.getRootNode() instanceof ShadowRoot)
+      flags |= FLAGS.in_shadow;
+    if (popoverOpen) flags |= FLAGS.popover_open;
+    if (
+      style.textOverflow === "ellipsis" ||
+      ((style as CSSStyleDeclaration & { webkitLineClamp?: string }).webkitLineClamp ?? "none") !== "none"
+    )
+      flags |= FLAGS.ellipsis;
+    if (
+      element.tagName === "IMG" &&
+      (element as HTMLImageElement).complete &&
+      (element as HTMLImageElement).naturalWidth === 0 &&
+      !!(element as HTMLImageElement).currentSrc
+    )
+      flags |= FLAGS.broken_image;
 
     let textLength = 0;
     if (!ignored && !opaque && visible) textLength = measureText(element, index, text);
@@ -386,11 +336,9 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
 
     if (ignored || opaque || LEAF_TAGS.has(element.tagName)) return;
     let children: Element[] | null = null;
-    let shadow = frame.shadow;
     const shadowRoot = (element as HTMLElement).shadowRoot;
     if (shadowRoot) {
       children = Array.from(shadowRoot.children);
-      shadow = true;
     } else if (element instanceof HTMLSlotElement) {
       const assigned = element.assignedElements({ flatten: true });
       if (assigned.length) children = assigned;
@@ -404,7 +352,6 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
       parent: index,
       clip: contentClip ? intersect(clip, box) : clip,
       opacity,
-      shadow,
     });
   };
 
@@ -487,6 +434,14 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     sliceMs,
     sliceElements,
   };
+}
+
+function coarsePointer(): boolean {
+  try {
+    return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+  } catch {
+    return false;
+  }
 }
 
 function safeMatches(element: Element, selector: string): boolean {
@@ -676,4 +631,17 @@ function truncateBody(body: SnapshotBody, keep: number): SnapshotBody {
       top: hits.top.slice(0, h).map((index) => (index >= keep ? -1 : index)),
     },
   };
+}
+
+/**
+ * Content the browser skips rendering (the body of a closed <details>, other
+ * content-visibility: hidden subtrees) still has layout boxes; checkVisibility
+ * knows it is not shown. Where the API is missing, assume rendered.
+ */
+function rendered(element: Element): boolean {
+  try {
+    return typeof element.checkVisibility !== "function" || element.checkVisibility();
+  } catch {
+    return true;
+  }
 }

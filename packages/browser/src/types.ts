@@ -1,3 +1,4 @@
+import type { DetectOptions, FindingData } from "./detect/types";
 import type { InteractionSink } from "./sink";
 import type { SnapshotSummary } from "./snapshot";
 
@@ -63,6 +64,10 @@ export interface InteractionOptions {
   visibleSettleMs?: number;
   /** Subtrees recorded as one box flagged `ignored`, never descended. Always includes `[data-layout-ignore]` and `[data-interactions-exclude]`. */
   ignoreSelector?: string;
+  /** Run the checks in idle time and send `ui.finding` events, once per fingerprint per page session. Default true. */
+  findings?: boolean;
+  /** Check thresholds (see `@codepress/interactions-browser/detect`). */
+  detect?: Omit<DetectOptions, "now">;
 }
 
 export interface Diagnostics {
@@ -173,6 +178,14 @@ export interface ClickSettledData {
   route_changed: boolean;
   dialog_opened: boolean;
   focus_moved: boolean;
+  /** The click landed on a control (button, link, field, label, summary, control role or tabindex), not only inside a container. */
+  target_interactive?: boolean;
+  /** An input or change event fired on the clicked field (checkbox, radio, select…). */
+  value_changed?: boolean;
+  /** The click put focus in a text field, select or editable region: the caret or picker is the effect. */
+  field_focused?: boolean;
+  /** The click opened a new tab or window (link target, modifier key, download or window.open). */
+  new_context?: boolean;
   overlapped: boolean;
   incomplete: boolean;
   end_reason: ClickEndReason;
@@ -204,7 +217,7 @@ export interface EvidenceEvent {
   occurred_at: string;
   type: EventType;
   attribution: "explicit" | "inferred" | "unknown";
-  data: LegacyData | SnapshotEventData | ClickSettledData | PerfSummaryData;
+  data: LegacyData | SnapshotEventData | ClickSettledData | PerfSummaryData | FindingData;
 }
 
 export interface Batch {

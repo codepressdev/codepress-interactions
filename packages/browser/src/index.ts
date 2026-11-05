@@ -23,6 +23,7 @@ export type {
   SinkSnapshot,
 } from "./sink";
 export { createHttpSink, createMemorySink } from "./sink";
+export type { DetectOptions, ElementRef, Evidence, FindingData } from "./detect/types";
 export type { SnapshotBody, SnapshotSummary } from "./snapshot";
 export { FLAGS, HIT_POINTS, POSITIONS } from "./snapshot";
 export { VERSION, defaultRouteTemplate } from "./util";

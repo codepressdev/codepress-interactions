@@ -44,6 +44,15 @@ importers:
 
   packages/browser: {}
 
+  packages/playwright:
+    dependencies:
+      '@codepress/interactions-browser':
+        specifier: workspace:^
+        version: link:../browser
+      '@playwright/test':
+        specifier: '>=1.40'
+        version: 1.64.1
+
   packages/react:
     dependencies:
       '@codepress/interactions-browser':

@@ -8,7 +8,8 @@
     "client_height": 600,
     "device_pixel_ratio": 1,
     "scroll_x": 0,
-    "scroll_y": 0
+    "scroll_y": 0,
+    "coarse_pointer": false
   },
   "document": {
     "width": 800,
@@ -35,7 +36,10 @@
       "pointer_events_none": 64,
       "opaque": 128,
       "clips_content": 256,
-      "in_shadow": 512
+      "in_shadow": 512,
+      "popover_open": 1024,
+      "ellipsis": 2048,
+      "broken_image": 4096
     },
     "hit_points": [
       "center",

@@ -1,4 +1,8 @@
 import { ClickEffects } from "./click-effects";
+import { checkEvents, checkSnapshot } from "./detect/index";
+import type { TimelineEvent } from "./detect/timeline";
+import { toFindingData, type Finding } from "./detect/types";
+import type { SnapshotBody } from "./format";
 import { PerfSignals } from "./perf";
 import {
   callSink,
@@ -46,6 +50,11 @@ const ATTRIBUTION = "explicit synchronous runAction only" as const;
 const CONTROLS = "button,a,form,input[type=submit],[role=button]";
 const MAX_SENT_HASHES = 1000;
 const MAX_PENDING_SNAPSHOTS = 4;
+/** Fingerprints remembered per page session; past this the oldest may be sent again. */
+const MAX_FINDINGS = 2000;
+/** Events kept for the click and stability checks. */
+const MAX_TIMELINE = 500;
+const TIMELINE_TYPES = new Set(["interaction.started", "ui.click.settled", "ui.state.changed", "perf.summary", "ui.snapshot"]);
 
 type EventData = EvidenceEvent["data"];
 interface PendingSnapshot extends SinkSnapshot {
@@ -108,6 +117,11 @@ export class Runtime {
   private snapshotStats = { taken: 0, uploaded: 0, deduplicated: 0, skipped: 0 };
   private lastSnapshot: SnapshotSummary | null = null;
   private walks = 0;
+  // Findings
+  private findingsEnabled: boolean;
+  private sentFindings = new Set<string>();
+  private timeline: TimelineEvent[] = [];
+  private timelineScheduled = false;
 
   constructor(
     private options: InteractionOptions,
@@ -140,6 +154,7 @@ export class Runtime {
       options.snapshots !== false &&
       typeof crypto !== "undefined" &&
       typeof crypto.subtle?.digest === "function";
+    this.findingsEnabled = options.findings !== false;
   }
 
   lease(): InteractionHandle {
@@ -229,7 +244,7 @@ export class Runtime {
         this.dropped++;
         return;
       }
-      this.queue.push({
+      const event: EvidenceEvent = {
         event_id: crypto.randomUUID(),
         schema_version: 2,
         interaction_id: id,
@@ -241,7 +256,13 @@ export class Runtime {
         type,
         attribution: attribution ?? (id ? "explicit" : "unknown"),
         data,
-      });
+      };
+      this.queue.push(event);
+      if (this.findingsEnabled && TIMELINE_TYPES.has(type)) {
+        this.timeline.push(event as TimelineEvent);
+        if (this.timeline.length > MAX_TIMELINE) this.timeline.splice(0, this.timeline.length - MAX_TIMELINE);
+        if (type === "ui.click.settled" || type === "perf.summary") this.scheduleTimelineChecks();
+      }
     } catch {
       this.dropped++;
     }
@@ -319,7 +340,7 @@ export class Runtime {
         action: event.type,
         control_id: controlId,
       });
-      if (event.type === "click") this.clicks?.begin(id, controlId, target);
+      if (event.type === "click") this.clicks?.begin(id, controlId, target, event);
     };
     listen(document, "click", control);
     listen(document, "submit", control);
@@ -362,6 +383,7 @@ export class Runtime {
       });
     }
     this.patchXHR();
+    this.patchWindowOpen();
     this.timer = setInterval(
       () => {
         void this.flush();
@@ -607,6 +629,74 @@ export class Runtime {
     );
   }
 
+  /** Counts window.open during a click as opening a new tab (no DOM change is the expected effect). */
+  private patchWindowOpen(): void {
+    const original = window.open;
+    if (typeof original !== "function") return;
+    const runtime = this;
+    const wrapped = function (this: Window, ...args: Parameters<Window["open"]>) {
+      try {
+        runtime.clicks?.newContext();
+      } catch {
+        /* Opening the window must remain unaffected. */
+      }
+      return original.apply(this, args);
+    } as Window["open"];
+    window.open = wrapped;
+    this.removals.push(() => {
+      if (window.open === wrapped) window.open = original;
+    });
+  }
+
+  // ---- Findings --------------------------------------------------------
+
+  /** Sends each new fingerprint once per page session. */
+  private emitFindings(findings: Finding[]): void {
+    for (const finding of findings) {
+      if (!this.active) return;
+      if (this.sentFindings.has(finding.fingerprint)) continue;
+      if (this.sentFindings.size >= MAX_FINDINGS)
+        this.sentFindings.delete(this.sentFindings.values().next().value!);
+      this.sentFindings.add(finding.fingerprint);
+      this.record(
+        "ui.finding",
+        finding.interaction_id,
+        toFindingData(finding),
+        finding.interaction_id ? "inferred" : "unknown",
+      );
+    }
+  }
+
+  private runTimelineChecks(): void {
+    if (!this.findingsEnabled || !this.active || !this.timeline.length) return;
+    try {
+      this.emitFindings(checkEvents(this.timeline, { ...this.options.detect, now: Date.now() }));
+    } catch {
+      /* A check failing must never affect capture. */
+    }
+  }
+
+  private scheduleTimelineChecks(): void {
+    if (this.timelineScheduled) return;
+    this.timelineScheduled = true;
+    void idle().then(() => {
+      this.timelineScheduled = false;
+      this.runTimelineChecks();
+    });
+  }
+
+  private runSnapshotChecks(body: SnapshotBody, sha256: string): void {
+    if (!this.findingsEnabled) return;
+    void idle().then(() => {
+      if (!this.active) return;
+      try {
+        this.emitFindings(checkSnapshot(body, { ...this.options.detect, sha256 }));
+      } catch {
+        /* A check failing must never affect capture. */
+      }
+    });
+  }
+
   private patchXHR(): void {
     const prototype = XMLHttpRequest.prototype;
     const originalOpen = prototype.open;
@@ -772,6 +862,7 @@ export class Runtime {
     }
     this.sentHashes.add(sha256);
     this.record("ui.snapshot", null, data);
+    this.runSnapshotChecks(body, sha256);
     // The first screen also reports which performance signals this browser has.
     if (!this.reportedSignals) this.recordPerf(true);
     if (this.snapshotQueue.length >= MAX_PENDING_SNAPSHOTS) {
@@ -857,6 +948,7 @@ export class Runtime {
     if (!this.active) return Promise.resolve();
     if (this.sending) return this.sending;
     this.recordPerf();
+    this.runTimelineChecks();
     this.sending = this.send(keepalive)
       .catch(() => {
         this.lastError = "transport_error";
@@ -948,6 +1040,7 @@ export class Runtime {
     this.queue = [];
     this.pending = null;
     this.snapshotQueue = [];
+    this.timeline = [];
     this.stopController.abort();
     clearInterval(this.timer);
     this.observer?.disconnect();
@@ -967,6 +1060,12 @@ let onStop: ((runtime: Runtime) => void) | undefined;
 export const setStopHook = (hook: (runtime: Runtime) => void): void => {
   onStop = hook;
 };
+
+const idle = (): Promise<void> =>
+  new Promise((resolve) => {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(() => resolve(), { timeout: 1000 });
+    else setTimeout(resolve, 0);
+  });
 
 function validSelector(selector: string | undefined): string {
   if (!selector) return "";

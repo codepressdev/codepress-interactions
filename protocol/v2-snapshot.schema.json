@@ -82,6 +82,10 @@
           "type": "number",
           "minimum": -10000000,
           "maximum": 10000000
+        },
+        "coarse_pointer": {
+          "type": "boolean",
+          "description": "(pointer: coarse) matched: the primary input is touch. Absent before 0.3.0."
         }
       }
     },
@@ -162,7 +166,10 @@
             "pointer_events_none",
             "opaque",
             "clips_content",
-            "in_shadow"
+            "in_shadow",
+            "popover_open",
+            "ellipsis",
+            "broken_image"
           ],
           "properties": {
             "visible": {
@@ -194,6 +201,15 @@
             },
             "in_shadow": {
               "const": 512
+            },
+            "popover_open": {
+              "const": 1024
+            },
+            "ellipsis": {
+              "const": 2048
+            },
+            "broken_image": {
+              "const": 4096
             }
           }
         },
@@ -388,9 +404,9 @@
           "items": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 1023
+            "maximum": 8191
           },
-          "description": "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: inside an open shadow root."
+          "description": "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. Bodies before 0.3.0 never set the last three."
         },
         "text_length": {
           "type": "array",

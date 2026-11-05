@@ -6,7 +6,7 @@
     "build": "pnpm -r build",
     "test": "pnpm --filter @codepress/interactions-browser test",
     "typecheck": "pnpm -r typecheck",
-    "test:browser": "pnpm --filter @codepress/interactions-browser test:browser"
+    "test:browser": "pnpm --filter @codepress/interactions-browser --filter @codepress/interactions-playwright test:browser"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
