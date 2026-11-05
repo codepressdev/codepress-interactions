@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  javascript:
+    name: Typecheck, unit and browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # Version comes from package.json "packageManager".
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The React adapter type-checks against the browser package's built types.
+      - name: Build browser package
+        run: pnpm --filter @codepress/interactions-browser build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests (jsdom)
+        run: pnpm test
+
+      - name: Install Chromium
+        working-directory: packages/browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser tests (Chromium)
+        run: pnpm test:browser
+
+      - name: Check the packed files
+        working-directory: packages/browser
+        run: pnpm run pack:check
+
+  python:
+    name: Python tests and lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Lint
+        run: uv run ruff check src tests
