@@ -4,7 +4,9 @@ The three npm packages (`@codepress/interactions-browser`, `@codepress/interacti
 
 The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 
-## Unreleased
+## 1.2.0
+
+`@codepress/interactions-browser`, `@codepress/interactions-playwright` and `@codepress/interactions-react`, released together. The React adapter has no code change of its own; it is bumped with the others so its `InteractionOptions` type, re-exported from the browser package, carries the new options (`hovers`, `hoverDwellMs`, `hoverSettleMs`, `hoverRecordIntervalMs`, `maxHoverRecordsPerMinute`, `maxContrastElements`) and its dependency asks for the browser 1.2.0 it was built against. No existing check changed meaning, so `check_version` stays 1.
 
 ### Added
 
@@ -21,7 +23,7 @@ The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 - `perf.summary` carries `contrast_unknown`: text on new screens whose contrast could not be measured (an image or gradient behind it, opacity, or, for text below 4.5:1, a filter, blend mode or overlapping positioned layer).
 - `maxContrastElements` caps the text whose contrast is measured per snapshot (default 2000; 0 turns it off). Leaving `low_contrast` or `unnamed_control` out of `detect.checks` skips that measurement in the walk too, and its table is left out of the body.
 - The overhead bench (`scripts/overhead.mjs`) takes `--src` (measure another checkout), `--options` (SDK options), `--sizes`, `--throttles` and `--snapshots-only`, and reports walk CPU p95 next to the median.
-- `@codepress/interactions-playwright`: `sweepInteractions(page, options?)` hovers and then keyboard-focuses every visible control (up to `maxControls`, 200), runs the checks at rest and after each hover and focus settles, and returns `{ findings, controls, skipped }` with each finding once per fingerprint; `expectNoSweepFindings` fails a test on any of them. New options `maxControls`, `hover`, `focus` and `settleMs`. See [Hover and focus sweep](packages/playwright/README.md#hover-and-focus-sweep).
+- `@codepress/interactions-playwright`: `sweepInteractions(page, options?)` hovers and then keyboard-focuses every visible control (up to `maxControls`, 200), runs the checks at rest and after each hover and focus settles, and returns `{ findings, controls, skipped }` with each finding once per fingerprint; `expectNoSweepFindings` fails a test on any of them. New options `maxControls`, `hover`, `focus` and `settleMs`. The package also re-exports `hoverOnlyFindings`. See [Hover and focus sweep](packages/playwright/README.md#hover-and-focus-sweep).
 - Check `a11y.hover_only_content`, from a sweep only: hover opened an overlay and keyboard focus on the same control did not. `hoverOnlyFindings` in `@codepress/interactions-browser/detect`. The browser SDK never sends it, so receivers need no change; the check name fits the existing `check` pattern.
 - The page script (`@codepress/interactions-browser/page-script`) gains `hook(source)` and `sweep(setup)`, the in-page half of a sweep, built on the hover and focus follow-through.
 - Motion checks in `@codepress/interactions-browser`: `motion.layout_animation` (a transition or keyframe animation on a layout property), `motion.stuck_animation` (a finite animation with no end after `stuckAnimationMs`, default 10 s), `motion.offscreen_loop` (an infinite animation running over `offscreenLoopMs`, default 5 s, on an element that is not visible), `motion.janky_animation` (long animation frames over 50 ms of blocking during a visible animation, where `long-animation-frame` is supported) and `a11y.reduced_motion_ignored` (a large move or fade over 200 ms while the user asks for reduced motion). The SDK observes animation and transition events on `document` and sends these as `ui.finding` events; no new event type and no protocol change. See [Motion checks](packages/browser/README.md#motion-checks).
