@@ -115,6 +115,11 @@ Accept an intended finding explicitly, with the reason written down next to it:
 
 - in the test: `expectNoFindings(page, { ignoreFingerprints: ["<fingerprint>"] })`
   with a comment saying what it is and why it is fine; or
+- in the markup, for an overlap: `data-layout-allow-overlap="<other test id>"` (or
+  `*` for any element) on either element of the pair, with a comment. It allows that
+  pair for the overlap check only, and it stops applying when the cover sits on the
+  centre of a control (then the finding comes back with `allow_marker_overridden: true`:
+  that is a bug, not a design);
 - in the markup: `data-layout-ignore` on the subtree, with a comment. This removes
   the subtree from every check, so use it only for things like third-party widgets.
 
@@ -129,7 +134,7 @@ a different fingerprint in another band: there, check that nothing is found).
 Do not hide the symptom:
 no `pointer-events: none` or a higher `z-index` to let clicks through a cover that
 still sits on the control or its text, no `overflow: hidden` to crop a spill, no
-`data-layout-ignore` or `ignoreFingerprints` on a real bug, and do not rename
+`data-layout-ignore`, `data-layout-allow-overlap` or `ignoreFingerprints` on a real bug, and do not rename
 test IDs (that changes the fingerprint without fixing anything).
 
 ## 8. Prove it

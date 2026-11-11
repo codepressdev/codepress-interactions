@@ -25,6 +25,10 @@ test("regenerate golden fixtures", async ({ page }) => {
        <h1>Checkout</h1>
        <p style="width:240px">Your order ships in two to three business days.</p>
        <button data-testid="checkout-save" id="save">Save</button>
+       <div style="position:relative;width:32px;height:32px;margin-top:16px">
+         <div data-testid="cart-icon" style="width:32px;height:32px;background:#ccc"></div>
+         <span data-testid="cart-count" data-layout-allow-overlap="cart-icon" style="position:absolute;right:-6px;top:-6px;width:14px;height:14px;background:#c00"></span>
+       </div>
      </main>
      <script>
        document.getElementById("save").addEventListener("click", async () => {

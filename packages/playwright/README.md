@@ -36,7 +36,7 @@ Options (all optional):
 | Option | Default | |
 | --- | --- | --- |
 | `root` | whole document | CSS selector of the subtree to walk |
-| `ignore` | none | extra selector for subtrees to leave out; `[data-layout-ignore]` always applies |
+| `ignore` | none | extra selector for subtrees to leave out; `[data-layout-ignore]` always applies (to allow one overlap pair and keep the elements in every other check, use `data-layout-allow-overlap` in the markup instead) |
 | `route` | from the URL | route template recorded on findings and used by fingerprints |
 | `routeSegments` | `[]` | literal path segments kept in the default route template (others become `:id`) |
 | `maxElements` | 50000 | element limit |

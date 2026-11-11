@@ -21,6 +21,7 @@ import {
   type TimelineEvent,
 } from "../src/detect/index";
 import { FLAGS, HIT_POINTS, POSITIONS } from "../src/format";
+import { encodeSnapshot } from "../src/snapshot";
 
 const protocol = resolve(__dirname, "../../../protocol");
 
@@ -203,6 +204,96 @@ describe("overlap", () => {
     const scrolled = body(els, { document: { width: 1280, height: 3000 }, hits });
     scrolled.viewport.scroll_y = 400;
     expect(checkSnapshot(scrolled).filter((f) => f.type === "overlap")).toEqual([]);
+  });
+});
+
+describe("allow-overlap marker", () => {
+  const A = FLAGS.allow_overlap;
+  /** An avatar with a badge on its corner, and a third element away from both. */
+  const avatar = (badgeFlags: number = V, avatarFlags: number = V) => [
+    { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+    { parent: 0, box: [40, 40, 48, 48], position: "relative", testId: "avatar", flags: avatarFlags },
+    { parent: 0, tag: "span", box: [78, 34, 16, 16], position: "absolute", testId: "badge", flags: badgeFlags, text: [80, 36, 8, 12] },
+    { parent: 0, box: [400, 400, 40, 40], testId: "elsewhere" },
+  ] as El[];
+  const overlaps = (b: SnapshotBody) => checkSnapshot(b).filter((f) => f.type === "overlap");
+  const pairs = (element: number[], other: number[]) => ({ allow_overlap: { element, other } });
+
+  it("without a marker the badge is reported, with allow_marker_overridden false", () => {
+    const [found] = overlaps(body(avatar()));
+    expect([found.subject?.test_id, found.other?.test_id]).toEqual(["avatar", "badge"]);
+    expect(found.evidence.allow_marker_overridden).toBe(false);
+  });
+
+  it("a marker on either side that names the other suppresses the pair", () => {
+    expect(overlaps(body(avatar(V | A), pairs([2], [1])))).toEqual([]);
+    expect(overlaps(body(avatar(V, V | A), pairs([1], [2])))).toEqual([]);
+  });
+
+  it("* allows any partner, on either side", () => {
+    expect(overlaps(body(avatar(V | A), pairs([2], [-1])))).toEqual([]);
+    expect(overlaps(body(avatar(V, V | A), pairs([1], [-1])))).toEqual([]);
+  });
+
+  it("a marker naming a different element still reports the pair", () => {
+    const [found] = overlaps(body(avatar(V | A), pairs([2], [3])));
+    expect([found.subject?.test_id, found.other?.test_id]).toEqual(["avatar", "badge"]);
+    expect(found.evidence.allow_marker_overridden).toBe(false);
+    // A marker whose names matched nothing records the flag and no pair.
+    expect(overlaps(body(avatar(V | A), pairs([], [])))).toHaveLength(1);
+  });
+
+  it("ignores pairs for rows without the flag, and malformed rows", () => {
+    expect(overlaps(body(avatar(), pairs([2], [1])))).toHaveLength(1);
+    expect(overlaps(body(avatar(V | A), pairs([2, 99, -3, 1.5], [99, 1.5, 1, 1])))).toHaveLength(1);
+    expect(overlaps(body(avatar(V | A), { allow_overlap: { element: "x", other: null } as any }))).toHaveLength(1);
+  });
+
+  it("gives way when the cover sits on the centre of an interactive subject", () => {
+    // promo (row 3) allows pay (row 2), but covers pay's centre.
+    const b = covered(3, pairs([3], [2]));
+    b.elements.flags[3] |= A;
+    const [found] = overlaps(b);
+    expect([found.subject?.test_id, found.other?.test_id]).toEqual(["pay", "promo"]);
+    expect(found.evidence).toMatchObject({ center_blocked: true, subject_interactive: true, allow_marker_overridden: true });
+    // Same marker with the centre clear (only corners blocked): allowed.
+    const corners = covered(3, { ...pairs([3], [2]), hits: [{ row: 2, tested: 5, blocked: 2, points: 0b110, top: 3 }] });
+    corners.elements.flags[3] |= A;
+    expect(overlaps(corners)).toEqual([]);
+  });
+
+  it("a blocked centre on a subject that is not a control does not override the marker", () => {
+    // A non-interactive subject: center_blocked can only come from a control inside it.
+    const b = covered(3, pairs([3], [2]));
+    b.elements.flags[3] |= A;
+    b.elements.flags[2] = V;
+    expect(overlaps(b)).toEqual([]);
+  });
+
+  it("a body cut to fit keeps only the pairs whose rows both survive", () => {
+    const els = avatar(V | A, V | A);
+    const b = body(els, pairs([1, 1, 2], [2, -1, 3]));
+    const full = JSON.stringify(b).length;
+    const { body: cut } = encodeSnapshot(b, full - 1);
+    expect(cut.element_count).toBeLessThan(4);
+    const keep = cut.element_count;
+    const left = cut.allow_overlap!;
+    expect(left.element.length).toBe(left.other.length);
+    for (let i = 0; i < left.element.length; i++) {
+      expect(left.element[i]).toBeLessThan(keep);
+      expect(left.other[i]).toBeLessThan(keep);
+    }
+    // Untouched bodies keep the table as it was, and bodies without one gain none.
+    expect(encodeSnapshot(b, full * 2).body.allow_overlap).toEqual({ element: [1, 1, 2], other: [2, -1, 3] });
+    expect("allow_overlap" in encodeSnapshot(body(els), 1e9).body).toBe(false);
+  });
+
+  it("the pair the marker allows also covers the pairs nested inside it", () => {
+    const els = avatar(V | A);
+    els.splice(2, 0, { parent: 1, tag: "img", box: [40, 40, 48, 48] });
+    // Rows: 1 avatar, 2 img inside it, 3 badge.
+    expect(overlaps(body(els))).toHaveLength(1);
+    expect(overlaps(body(els, pairs([3], [1])))).toEqual([]);
   });
 });
 

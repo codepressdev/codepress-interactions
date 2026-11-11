@@ -21,6 +21,7 @@ export const FLAGS = {
   ellipsis: 2048,
   broken_image: 4096,
   aria_hidden: 8192,
+  allow_overlap: 16384,
 } as const;
 
 /** Color scheme on screen. A bounded enum: anything else is recorded as "unknown". */
@@ -84,5 +85,15 @@ export interface SnapshotBody {
     blocked: number[];
     points: number[];
     top: number[];
+  };
+  /**
+   * Overlaps allowed with `data-layout-allow-overlap`, resolved in the page:
+   * `element` (a row flagged `allow_overlap`) allows `other` (a row, or -1 for
+   * any). Only pairs whose boxes intersect are listed. Absent when no recorded
+   * element carries the marker, and in bodies before 1.2.0.
+   */
+  allow_overlap?: {
+    element: number[];
+    other: number[];
   };
 }

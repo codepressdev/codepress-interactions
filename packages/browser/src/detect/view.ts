@@ -65,6 +65,8 @@ export class SnapshotView {
   /** Per row, the line count of each text box in `textBoxes` (same order); null when absent. */
   readonly textLines: Map<number, (number | null)[]>;
   readonly hitRows: Map<number, number>;
+  /** Per row flagged `allow_overlap`, the rows its marker allows (-1: any). */
+  readonly allowed: Map<number, Set<number>>;
   readonly documentScrolls: boolean;
   /** The page is scrolled away from its origin. */
   readonly documentScrolled: boolean;
@@ -168,6 +170,18 @@ export class SnapshotView {
     const h = body.hit_tests;
     const hn = Math.min(...(["element", "tested", "blocked", "points", "top"] as const).map((key) => (Array.isArray(h?.[key]) ? h[key].length : 0)));
     for (let i = 0; i < hn; i++) if (Number.isInteger(h.element[i]) && h.element[i] >= 0 && h.element[i] < n) this.hitRows.set(h.element[i], i);
+    this.allowed = new Map();
+    const al = body.allow_overlap;
+    const an = Array.isArray(al?.element) && Array.isArray(al?.other) ? Math.min(al.element.length, al.other.length) : 0;
+    for (let i = 0; i < an; i++) {
+      const row = al!.element[i];
+      const other = al!.other[i];
+      if (!Number.isInteger(row) || row < 0 || row >= n || !(this.flags[row] & FLAGS.allow_overlap)) continue;
+      if (!Number.isInteger(other) || other < -1 || other >= n) continue;
+      const set = this.allowed.get(row);
+      if (set) set.add(other);
+      else this.allowed.set(row, new Set([other]));
+    }
     const doc = body.document ?? { width: 0, height: 0 };
     this.documentScrolls = num(doc.height) > clientHeight + 1 || num(doc.width) > clientWidth + 1;
     this.documentScrolled = num(body.viewport?.scroll_x) > 0.5 || num(body.viewport?.scroll_y) > 0.5;
@@ -208,6 +222,13 @@ export class SnapshotView {
     };
     this.contents.set(row, result);
     return result;
+  }
+
+  /** Either element's `data-layout-allow-overlap` marker allows the other (by test ID or `*`). */
+  allowsOverlap(a: number, b: number): boolean {
+    const mine = this.allowed.get(a);
+    const theirs = this.allowed.get(b);
+    return !!(mine && (mine.has(b) || mine.has(-1))) || !!(theirs && (theirs.has(a) || theirs.has(-1)));
   }
 
   /** `row` is `ancestor` or inside it. */

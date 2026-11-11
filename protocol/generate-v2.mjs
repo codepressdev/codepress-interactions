@@ -240,9 +240,9 @@ const col = (items, desc) => ({ type: "array", maxItems: 50000, items, ...(desc 
 const coord = num(-1e7, 1e7);
 const size = num(0, 1e7);
 const idx = int(-1, 49999);
-const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512, popover_open: 1024, ellipsis: 2048, broken_image: 4096, aria_hidden: 8192 };
+const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512, popover_open: 1024, ellipsis: 2048, broken_image: 4096, aria_hidden: 8192, allow_overlap: 16384 };
 /** Flags 0.2.0 bodies do not list in their legend. */
-const LATER_FLAGS = ["popover_open", "ellipsis", "broken_image", "aria_hidden"];
+const LATER_FLAGS = ["popover_open", "ellipsis", "broken_image", "aria_hidden", "allow_overlap"];
 const snapshot = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: base + "v2-snapshot.schema.json",
@@ -300,7 +300,7 @@ const snapshot = {
       height: col(size),
       z_index: col(nullable(int(-2147483648, 2147483647)), "Computed z-index; null for auto."),
       position: col(int(0, 4), "Index into legend.position (computed CSS position)."),
-      flags: col(int(0, 16383), "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. aria_hidden: the element or an ancestor has aria-hidden=true. Bodies before 0.3.0 never set the last four."),
+      flags: col(int(0, 32767), "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. aria_hidden: the element or an ancestor has aria-hidden=true. allow_overlap: the element carries a data-layout-allow-overlap marker (added in 1.2.0; see allow_overlap). Bodies before 0.3.0 never set popover_open, ellipsis, broken_image or aria_hidden."),
       text_length: col(count, "Characters in direct, non-whitespace text node children (trimmed). The text itself is never read into the body."),
     }),
     text_boxes: {
@@ -324,7 +324,14 @@ const snapshot = {
       }),
       description: "For visible interactive elements only: elementFromPoint at the center and at the four points 25% in from each edge. elementFromPoint is never called for other elements.",
     },
-  }),
+    allow_overlap: {
+      ...strict({
+        element: col(int(0, 49999), "Row of an element flagged allow_overlap."),
+        other: col(idx, "Row of the element its marker allows, or -1 when the marker allows any element (*)."),
+      }),
+      description: "Added in 1.2.0. Overlaps allowed in the markup with data-layout-allow-overlap, resolved in the page to row pairs: a marker's space-separated names match elements whose data-interaction-id or data-testid has that value (before the test ID filter), and * matches any element. Only pairs whose boxes intersect are listed, at most 10000. The marker's value is never recorded. Absent when no recorded element carries the marker.",
+    },
+  }, ["schema_version", "route_template", "viewport", "document", "element_count", "truncated", "torn", "legend", "dictionaries", "elements", "text_boxes", "hit_tests"]),
 };
 writeFileSync(`${out}/v2-batch.schema.json`, JSON.stringify(batch, null, 2) + "\n");
 writeFileSync(`${out}/v2-snapshot.schema.json`, JSON.stringify(snapshot, null, 2) + "\n");

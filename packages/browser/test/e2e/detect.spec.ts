@@ -178,6 +178,73 @@ test("broken_image: an image that loaded no image data", async ({ page }) => {
   expect(findingsOf(out).map((e) => e.data.check)).toContain("stability.broken_image");
 });
 
+// ---- data-layout-allow-overlap ------------------------------------------------------
+
+const overlapsOf = (findings: Finding[]) =>
+  findings.filter((f) => f.type === "overlap").map((f) => [f.subject?.test_id ?? f.subject?.stable_id, f.other?.test_id ?? f.other?.stable_id]);
+
+test("allow-overlap: a badge marked for its avatar is not reported; one marked for another element is", async ({ page }) => {
+  const avatar = (marker: string) =>
+    `<div style="position:relative;margin:40px;height:200px">
+      <div data-testid="avatar" style="position:absolute;left:0;top:0;width:48px;height:48px;border-radius:50%;background:#ccc"><img alt="" style="width:48px;height:48px;display:block"></div>
+      <span data-testid="badge" data-layout-allow-overlap="${marker}" style="position:absolute;left:38px;top:-6px;width:16px;height:16px;background:red;color:#fff;font-size:10px">3</span>
+      <div data-testid="card" style="position:absolute;left:0;top:100px;width:48px;height:48px"></div>
+    </div>`;
+  const allowed = await scan(page, avatar("avatar"));
+  expectSame(allowed);
+  expect(overlapsOf(allowed.node)).toEqual([]);
+  const badge = rowOf(allowed.body, "badge");
+  expect(allowed.body.elements.flags[badge] & 16384).toBe(16384);
+  expect(allowed.body.allow_overlap).toEqual({ element: [badge], other: [rowOf(allowed.body, "avatar")] });
+
+  const other = await scan(await page.context().newPage(), avatar("card"));
+  expectSame(other);
+  expect(overlapsOf(other.node)).toEqual([["avatar", "badge"]]);
+  expect(other.node[0].evidence.allow_marker_overridden).toBe(false);
+  // The named element exists but does not touch the badge: no pair is recorded.
+  expect(other.body.allow_overlap).toEqual({ element: [], other: [] });
+});
+
+test("allow-overlap: the marker gives way once the badge covers the centre of an avatar button", async ({ page }) => {
+  const result = await scan(
+    page,
+    `<div style="position:relative;margin:40px;height:200px">
+      <button data-testid="avatar" style="position:absolute;left:0;top:0;width:48px;height:48px;border-radius:50%;padding:0;border:0;background:#ccc"></button>
+      <span data-testid="badge" data-layout-allow-overlap="avatar" style="position:absolute;left:12px;top:12px;width:30px;height:30px;background:red"></span>
+    </div>`,
+  );
+  expectSame(result);
+  const found = result.node.filter((f) => f.type === "overlap");
+  expect(overlapsOf(found)).toEqual([["avatar", "badge"]]);
+  expect(found[0].evidence).toMatchObject({ center_blocked: true, subject_interactive: true, allow_marker_overridden: true });
+});
+
+test("allow-overlap: * on a fixed header, a marker on the covered side, and a name the test ID filter drops", async ({ page }) => {
+  const html = (attr: string) =>
+    `<header data-testid="top" ${attr}="*" style="position:fixed;left:0;top:0;width:100%;height:60px;background:#fff">Header</header>
+     <main style="padding-top:40px"><p data-testid="intro" style="margin:0">Intro text under the header</p></main>
+     <div style="position:relative;margin:100px 40px;height:60px">
+       <div data-testid="user-42" style="position:absolute;left:0;top:0;width:48px;height:48px;background:#ccc"></div>
+       <span data-testid="dot" ${attr}="user-42" style="position:absolute;left:38px;top:-6px;width:16px;height:16px;background:red"></span>
+       <div data-testid="photo" ${attr}="pip" style="position:absolute;left:100px;top:0;width:48px;height:48px;background:#ccc"></div>
+       <span data-testid="pip" style="position:absolute;left:138px;top:-6px;width:16px;height:16px;background:red"></span>
+     </div>`;
+  const unmarked = await scan(page, html("data-other"));
+  expectSame(unmarked);
+  const pairs = overlapsOf(unmarked.node);
+  expect(pairs).toHaveLength(3);
+  expect(pairs).toContainEqual(["photo", "pip"]);
+  expect(pairs.filter(([, b]) => b === "top")).toHaveLength(1);
+  expect(pairs.filter(([, b]) => b === "dot")).toHaveLength(1);
+
+  const marked = await scan(await page.context().newPage(), html("data-layout-allow-overlap"));
+  expectSame(marked);
+  expect(overlapsOf(marked.node)).toEqual([]);
+  // user-42 is dropped by the default test ID filter, yet the marker naming it still applies.
+  expect(marked.body.dictionaries.test_id).not.toContain("user-42");
+  expect(marked.body.allow_overlap.element).toHaveLength(3);
+});
+
 // ---- Layout negatives -----------------------------------------------------------
 
 test("no overlap or spill: tooltip, dialog, ignored badge, scroller content, sticky header", async ({ page }) => {
