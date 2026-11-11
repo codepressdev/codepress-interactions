@@ -595,6 +595,93 @@
         }
       },
       "description": "Added in 1.2.0. Overlaps allowed in the markup with data-layout-allow-overlap, resolved in the page to row pairs: a marker's space-separated names match elements whose data-interaction-id or data-testid has that value (before the test ID filter), and * matches any element. Only pairs whose boxes intersect are listed, at most 10000. The marker's value is never recorded. Absent when no recorded element carries the marker."
+    },
+    "contrast": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "element",
+        "ratio",
+        "font_px",
+        "bold"
+      ],
+      "properties": {
+        "element": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49999
+          }
+        },
+        "ratio": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 21
+          },
+          "description": "WCAG 2.x contrast ratio of the text colour (alpha composited) against the background behind it, rounded down to 2 decimal places."
+        },
+        "font_px": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "description": "Computed font size in CSS px, rounded to 0.01."
+        },
+        "bold": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "boolean"
+          },
+          "description": "Computed font weight 700 or more."
+        }
+      },
+      "description": "Text below 4.5:1, the highest WCAG AA threshold (text at or above it meets every size's minimum and is not listed). Visible elements with direct text, not aria-hidden and not a disabled or aria-disabled control (or inside one), whose background could be worked out: background colours composited up the ancestors onto the canvas (white, or black when the root's color-scheme is dark). Text is left out (and counted in perf.summary contrast_unknown) when a background image or gradient or opacity below 1 is on the way up, its colour is not sRGB, or (looked for only around text measuring below 4.5:1) a filter or mix-blend-mode is on the way up or a positioned element that paints its own layer and is not an ancestor overlaps it. Contrast is worked out for at most maxContrastElements (default 2000) text elements per snapshot. Colours are never recorded. Absent before 1.2.0."
+    },
+    "unnamed_controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "element",
+        "has_title",
+        "icon_only"
+      ],
+      "properties": {
+        "element": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49999
+          }
+        },
+        "has_title": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "boolean"
+          },
+          "description": "The control has a title attribute (blank, since a non-blank one would name it)."
+        },
+        "icon_only": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "boolean"
+          },
+          "description": "The control holds an svg, img or picture and no text, or is an image input."
+        }
+      },
+      "description": "Visible, enabled interactive elements with a role, not aria-hidden, whose accessible name is empty: no aria-labelledby target with text, aria-label, associated label with text, alt (image inputs), title, placeholder, own text (for roles named from content: button, link, checkbox, radio, switch, tab, menu items, option, treeitem) or value (button-type inputs; submit and reset without a value have a default name). Worked out in the page; only these booleans are recorded. Absent before 1.2.0."
     }
   }
 }

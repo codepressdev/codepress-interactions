@@ -15,6 +15,12 @@ The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 - `perf.summary` gains `hovers_silent` and `focus_silent`, the hovers and keyboard focuses that changed nothing. Each is absent when zero, so with `hovers: false` a summary is the same as before.
 - Check `a11y.no_focus_indicator`: keyboard focus with no visible change to the outline, box shadow, border or background of the element or its two nearest ancestors. `focusIndicatorFindings` in `@codepress/interactions-browser/detect`.
 - Protocol v2, additive: the `ui.hover.settled` event, the two trigger values, the two summary fields and the check name. A receiver must accept them before an SDK that sends them is deployed.
+- `a11y.low_contrast`: text below the WCAG 1.4.3 contrast minimum (4.5:1, or 3:1 for large text), measured in the page. Evidence: `contrast_ratio`, `required_ratio`, `font_px`, `bold`, `theme_dark`. Colours never leave the page. See [Accessibility measurements](packages/browser/README.md#accessibility-measurements).
+- `a11y.unnamed_control`: a shown control with no accessible name. Evidence: `has_title`, `has_icon_only`. Labels and text never leave the page.
+- Snapshot bodies carry two optional tables, `contrast` (element, ratio, font size, bold) and `unnamed_controls` (element, `has_title`, `icon_only`). Older bodies without them still validate and give no a11y findings.
+- `perf.summary` carries `contrast_unknown`: text on new screens whose contrast could not be measured (an image or gradient behind it, opacity, or, for text below 4.5:1, a filter, blend mode or overlapping positioned layer).
+- `maxContrastElements` caps the text whose contrast is measured per snapshot (default 2000; 0 turns it off). Leaving `low_contrast` or `unnamed_control` out of `detect.checks` skips that measurement in the walk too, and its table is left out of the body.
+- The overhead bench (`scripts/overhead.mjs`) takes `--src` (measure another checkout), `--options` (SDK options), `--sizes`, `--throttles` and `--snapshots-only`, and reports walk CPU p95 next to the median.
 
 ### Changed
 

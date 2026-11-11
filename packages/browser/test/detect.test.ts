@@ -21,6 +21,7 @@ import {
   type FindingData,
   type TimelineEvent,
 } from "../src/detect/index";
+import { BLACK, WHITE, composite, contrastRatio, floorRatio, parseColor, requiredRatio } from "../src/color";
 import { FLAGS, HIT_POINTS, POSITIONS } from "../src/format";
 import { encodeSnapshot } from "../src/snapshot";
 
@@ -806,5 +807,101 @@ describe("a11y.no_focus_indicator", () => {
   it("a tag-path control is marked structural", () => {
     const [finding] = focusIndicatorFindings({ ...observation, control_id: "main/form/button" });
     expect(finding.evidence.structural_id).toBe(true);
+  });
+});
+
+describe("colour math", () => {
+  it("composites a semi-transparent overlay: rgba(0,0,0,.5) over white", () => {
+    const backdrop = composite(parseColor("rgba(0, 0, 0, 0.5)")!, WHITE);
+    for (const channel of backdrop) expect(channel).toBeCloseTo(127.5, 5);
+    // Black text on that grey: (L(127.5) + 0.05) / 0.05 = 5.28.
+    expect(Math.abs(contrastRatio(BLACK, backdrop) - 5.28)).toBeLessThan(0.05);
+    // White text on it: 3.98.
+    expect(Math.abs(contrastRatio(WHITE, backdrop) - 3.98)).toBeLessThan(0.05);
+  });
+
+  it("parses computed colours and refuses what it cannot convert", () => {
+    expect(parseColor("rgb(153, 153, 153)")).toEqual([153, 153, 153, 1]);
+    expect(parseColor("rgba(0, 0, 0, 0)")).toEqual([0, 0, 0, 0]);
+    expect(parseColor("rgb(10 20 30 / 50%)")).toEqual([10, 20, 30, 0.5]);
+    expect(parseColor("color(srgb 1 0.5 0 / 0.25)")).toEqual([255, 127.5, 0, 0.25]);
+    expect(parseColor("oklch(0.5 0.1 120)")).toBeNull();
+    expect(parseColor("")).toBeNull();
+  });
+
+  it("measures WCAG 2.x ratios and the size thresholds", () => {
+    expect(floorRatio(contrastRatio([153, 153, 153], [170, 170, 170]))).toBe(1.22);
+    expect(floorRatio(contrastRatio([0x76, 0x76, 0x76], WHITE))).toBe(4.54);
+    expect(contrastRatio(BLACK, WHITE)).toBeCloseTo(21, 5);
+    // A semi-transparent foreground is composited over the backdrop first.
+    expect(contrastRatio(composite([0, 0, 0, 0], WHITE), WHITE)).toBe(1);
+    expect(floorRatio(4.4999)).toBe(4.49);
+    expect(requiredRatio(16, false)).toBe(4.5);
+    expect(requiredRatio(24, false)).toBe(3);
+    expect(requiredRatio(18.67, true)).toBe(3);
+    expect(requiredRatio(18.67, false)).toBe(4.5);
+    expect(requiredRatio(18, true)).toBe(4.5);
+  });
+});
+
+describe("accessibility checks", () => {
+  const page = (contrast: SnapshotBody["contrast"], unnamed?: SnapshotBody["unnamed_controls"], theme?: "dark" | "light") =>
+    body(
+      [
+        { parent: -1, tag: "body", box: [0, 0, 1280, 800] },
+        { parent: 0, tag: "p", box: [0, 0, 400, 20], testId: "small", text: [0, 0, 300, 20] },
+        { parent: 0, tag: "h1", box: [0, 40, 400, 30], testId: "large", text: [0, 40, 300, 30] },
+        { parent: 0, tag: "button", box: [0, 80, 32, 32], flags: V | I, testId: "icon", role: "button" },
+        { parent: 0, tag: "p", box: [0, 120, 1, 1], testId: "sr-only", text: [0, 120, 1, 1] },
+      ],
+      {
+        contrast,
+        unnamed_controls: unnamed,
+        ...(theme ? { viewport: { width: 1280, height: 800, client_width: 1280, client_height: 800, device_pixel_ratio: 1, scroll_x: 0, scroll_y: 0, theme } } : {}),
+      },
+    );
+
+  it("low_contrast compares each ratio with 4.5:1, or 3:1 for large text", () => {
+    const found = checkSnapshot(
+      page({ element: [1, 2, 4], ratio: [4.49, 3.1, 1.5], font_px: [16, 24, 16], bold: [false, false, false] }),
+    ).filter((f) => f.type === "low_contrast");
+    // The 1x1 visually hidden text is not shown, so not reported.
+    expect(found.map((f) => f.subject?.test_id)).toEqual(["small"]);
+    expect(found[0].check).toBe("a11y.low_contrast");
+    expect(found[0].evidence).toEqual({
+      contrast_ratio: 4.49,
+      required_ratio: 4.5,
+      font_px: 16,
+      bold: false,
+      theme_dark: false,
+      subject_structural_id: false,
+    });
+    const bold = checkSnapshot(page({ element: [2], ratio: [2.9], font_px: [18.67], bold: [true] }, undefined, "dark"));
+    expect(bold.filter((f) => f.type === "low_contrast")[0].evidence).toMatchObject({ required_ratio: 3, bold: true, theme_dark: true });
+  });
+
+  it("unnamed_control reports each listed control with its evidence, and sorts with controls", () => {
+    const found = checkSnapshot(page(undefined, { element: [3], has_title: [true], icon_only: [true] }));
+    const unnamed = found.filter((f) => f.type === "unnamed_control");
+    expect(unnamed).toHaveLength(1);
+    expect(unnamed[0].check).toBe("a11y.unnamed_control");
+    expect(unnamed[0].evidence).toEqual({ has_title: true, has_icon_only: true, subject_structural_id: false });
+    expect(involvesControl(unnamed[0])).toBe(true);
+    expect(findingTier(unnamed[0])).toBe(2);
+  });
+
+  it("bodies without the tables, or with malformed ones, give no a11y findings", () => {
+    expect(checkSnapshot(page(undefined)).filter((f) => f.check.startsWith("a11y."))).toEqual([]);
+    const malformed = page(
+      { element: [99, -1, 1.5, 1], ratio: [1, 1, 1, Number.NaN], font_px: [16, 16, 16, 16], bold: [false, false, false, false] },
+      { element: [42], has_title: [], icon_only: [] },
+    );
+    expect(checkSnapshot(malformed).filter((f) => f.check.startsWith("a11y."))).toEqual([]);
+  });
+
+  it("the checks option turns them off", () => {
+    const body = page({ element: [1], ratio: [1.2], font_px: [16], bold: [false] }, { element: [3], has_title: [false], icon_only: [false] });
+    expect(checkSnapshot(body, { checks: ["overlap"] }).filter((f) => f.check.startsWith("a11y."))).toEqual([]);
+    expect(checkSnapshot(body).map((f) => f.type).sort()).toEqual(["low_contrast", "unnamed_control"]);
   });
 });

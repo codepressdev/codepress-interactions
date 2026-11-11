@@ -91,7 +91,7 @@ const nameOf = (finding: Pick<FindingData, "check"> & { type?: string }): string
   finding.type ?? finding.check.slice(finding.check.lastIndexOf(".") + 1);
 
 /** Checks whose subject is always a control. */
-const CONTROL_CHECKS = new Set<string>(["offscreen_control", "small_tap_target"]);
+const CONTROL_CHECKS = new Set<string>(["offscreen_control", "small_tap_target", "unnamed_control"]);
 
 /**
  * The finding is about a control: one of its elements is a control (a button,

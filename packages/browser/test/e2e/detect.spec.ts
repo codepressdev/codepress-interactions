@@ -1071,3 +1071,176 @@ test("no_focus_indicator: Tab to outline:none buttons, with and without a :focus
   expect(browser).toEqual(node.map(wire));
   expect(browser[0].fingerprint).toBe(fp("no_focus_indicator", ["bare"]));
 });
+
+// ---- Accessibility: contrast and accessible names ----------------------------------
+
+const ofType = (findings: Finding[], type: Finding["type"]) => findings.filter((f) => f.type === type);
+/** contrast_unknown summed over every perf.summary sent. */
+const contrastUnknown = (out: Output) =>
+  events(out)
+    .filter((e) => e.type === "perf.summary")
+    .reduce((sum, e) => sum + (e.data.contrast_unknown ?? 0), 0);
+
+test("low_contrast: #999 text on #aaa needs 4.5:1 and has about 1.22:1", async ({ page }) => {
+  const result = await scan(
+    page,
+    `<main style="background:#aaa;padding:16px"><p data-testid="faint" style="color:#999">Shipping is free over fifty</p></main>`,
+  );
+  expectSame(result);
+  const found = ofType(result.node, "low_contrast");
+  expect(found).toHaveLength(1);
+  expect(found[0].subject?.test_id).toBe("faint");
+  expect(found[0].check).toBe("a11y.low_contrast");
+  // WCAG 2.x: (L(#aaa) + 0.05) / (L(#999) + 0.05) = 1.2264, rounded down to 2 places.
+  expect(found[0].evidence).toMatchObject({ contrast_ratio: 1.22, required_ratio: 4.5, font_px: 16, bold: false, theme_dark: false });
+  expect(found[0].fingerprint).toBe(fp("low_contrast", ["faint", null]));
+  expect(contrastUnknown(result.out)).toBe(0);
+});
+
+test("low_contrast: black on white, 24px #767676 (4.54:1) and 19px bold #949494 (3.03:1) are not reported", async ({ page }) => {
+  const result = await scan(
+    page,
+    `<main style="padding:16px">
+       <p data-testid="black" style="color:#000">Plain text</p>
+       <p data-testid="large" style="color:#767676;font-size:24px">Large grey text</p>
+       <p data-testid="bold-large" style="color:#949494;font-size:19px;font-weight:700">Bold large grey</p>
+       <button data-testid="off" disabled style="color:#ccc;background:#ddd">Disabled</button>
+       <div aria-disabled="true" role="button" tabindex="0" style="color:#ccc;background:#ddd"><span data-testid="off-span">Inactive</span></div>
+     </main>`,
+  );
+  expectSame(result);
+  expect(ofType(result.node, "low_contrast")).toEqual([]);
+  // Only text below 4.5:1 is listed: the bold large text (3.03:1, which meets 3:1). The disabled ones are never measured.
+  expect(result.body.contrast.element).toEqual([rowOf(result.body, "bold-large")]);
+  expect(result.body.contrast).toMatchObject({ ratio: [3.03], font_px: [19], bold: [true] });
+  expect(contrastUnknown(result.out)).toBe(0);
+});
+
+test("low_contrast: text on a gradient, an image, a positioned picture, under a filter or opacity is unknown, not reported", async ({ page }) => {
+  const img = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+  const result = await scan(
+    page,
+    `<main style="padding:16px">
+       <div style="background:linear-gradient(#fff,#eee)"><p style="color:#f0f0f0">On a gradient</p></div>
+       <div style="background:#fff url('${img}')"><p style="color:#f0f0f0">On an image</p></div>
+       <div style="position:relative;height:60px">
+         <img src="${img}" style="position:absolute;inset:0;width:100%;height:100%" alt="">
+         <p style="position:relative;color:#f0f0f0;margin:0">On a picture</p>
+       </div>
+       <p style="color:#f0f0f0;filter:contrast(2)">Under a filter</p>
+       <p style="color:#f0f0f0;opacity:.9">Under opacity</p>
+     </main>`,
+  );
+  expectSame(result);
+  expect(ofType(result.node, "low_contrast")).toEqual([]);
+  expect(contrastUnknown(result.out)).toBe(5);
+});
+
+test("low_contrast: a semi-transparent background is composited over the one below it", async ({ page }) => {
+  const result = await scan(
+    page,
+    `<div style="background:rgba(0,0,0,.5);padding:8px"><p data-testid="half-white" style="color:#fff">White on 50% black over white</p></div>
+     <div style="background:rgba(0,0,0,.5);padding:8px"><p data-testid="half-black" style="color:#000">Black on it</p></div>`,
+  );
+  expectSame(result);
+  // rgba(0,0,0,.5) over white is rgb(127.5,127.5,127.5): white on it is 3.98:1, black on it 5.28:1 (which passes).
+  const found = ofType(result.node, "low_contrast");
+  expect(found.map((f) => f.subject?.test_id)).toEqual(["half-white"]);
+  expect(Math.abs((found[0].evidence.contrast_ratio as number) - 3.98)).toBeLessThan(0.05);
+  expect(contrastUnknown(result.out)).toBe(0);
+});
+
+test("maxContrastElements caps the text measured per snapshot; 0 turns contrast off", async ({ page }) => {
+  const faint = '<p style="color:#bbb;margin:0">Faint</p>'.repeat(5);
+  const capped = await scan(page, faint, { maxContrastElements: 2 });
+  expect(capped.body.contrast.element).toHaveLength(2);
+  expectSame(capped);
+  const off = await scan(page, faint, { maxContrastElements: 0 });
+  expect(off.body.contrast).toBeUndefined();
+  expect(ofType(off.node, "low_contrast")).toEqual([]);
+});
+
+test("a11y checks left out of detect.checks are not measured: their tables are absent", async ({ page }) => {
+  const html = '<p style="color:#bbb">Faint</p><button data-testid="icon"><svg width="16" height="16"></svg></button>';
+  const neither = await scan(page, html, { detect: { checks: ["overlap", "spill"] } });
+  expect(neither.body.contrast).toBeUndefined();
+  expect(neither.body.unnamed_controls).toBeUndefined();
+  expect(neither.browser).toEqual([]);
+  const namesOnly = await scan(page, html, { detect: { checks: ["unnamed_control"] } });
+  expect(namesOnly.body.contrast).toBeUndefined();
+  expect(namesOnly.body.unnamed_controls.element).toHaveLength(1);
+  expect(ofType(namesOnly.node, "unnamed_control")).toHaveLength(1);
+  expectSame(namesOnly);
+  const contrastOnly = await scan(page, html, { detect: { checks: ["low_contrast"] } });
+  expect(contrastOnly.body.unnamed_controls).toBeUndefined();
+  expect(contrastOnly.body.contrast.element).toHaveLength(1);
+  expectSame(contrastOnly);
+});
+
+test("low_contrast: a dialog over its scrim is measured against the dialog; the page under the scrim is unknown", async ({ page }) => {
+  const result = await scan(
+    page,
+    // Faint page text: overlapping layers are only looked for above text measuring below 4.5:1.
+    `<p style="color:#ccc">Page text under the scrim</p>
+     <p data-testid="clear-under" style="color:#000">Clear text under the scrim (meets 4.5:1, not looked at further)</p>
+     <div style="position:fixed;inset:0;background:rgba(0,0,0,.4)"></div>
+     <div role="dialog" style="position:fixed;top:100px;left:100px;width:300px;background:#fff;z-index:1"><p data-testid="dialog-text" style="color:#bbb">Dialog text</p></div>`,
+  );
+  expectSame(result);
+  const found = ofType(result.node, "low_contrast");
+  expect(found.map((f) => f.subject?.test_id)).toEqual(["dialog-text"]);
+  expect(found[0].evidence.contrast_ratio).toBe(1.91);
+  expect(contrastUnknown(result.out)).toBe(1);
+});
+
+test("low_contrast: a dark theme page with dim text is reported with theme_dark", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  const result = await scan(
+    page,
+    `<style>:root{color-scheme:light dark}</style>
+     <main style="padding:16px">
+       <p data-testid="dim" style="color:#333">Dim text on the dark canvas</p>
+       <p style="color:#eee">Readable text</p>
+     </main>`,
+  );
+  expectSame(result);
+  const found = ofType(result.node, "low_contrast");
+  expect(found.map((f) => f.subject?.test_id)).toEqual(["dim"]);
+  // #333 on the black canvas: 1.66:1.
+  expect(found[0].evidence).toMatchObject({ contrast_ratio: 1.66, required_ratio: 4.5, theme_dark: true });
+});
+
+test("unnamed_control: an icon-only button without a name is reported; named controls are not", async ({ page }) => {
+  const icon = `<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 2h12v12H2z"/></svg>`;
+  const result = await scan(
+    page,
+    `<main style="padding:16px;display:grid;gap:8px;width:300px">
+       <button data-testid="icon">${icon}</button>
+       <button data-testid="icon-titled" title=" ">${icon}</button>
+       <button data-testid="icon-labelled" aria-label="Close">${icon}</button>
+       <button data-testid="icon-sr">${icon}<span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Close</span></button>
+       <button data-testid="icon-svg-title"><svg width="16" height="16"><title>Close</title><path d="M2 2h12v12H2z"/></svg></button>
+       <span id="name-source">Archive</span><button data-testid="by-id" aria-labelledby="name-source">${icon}</button>
+       <a data-testid="img-link" href="#"><img alt="" width="16" height="16" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a>
+       <a data-testid="img-alt-link" href="#"><img alt="Home" width="16" height="16" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a>
+       <label for="email">Email</label><input data-testid="labelled" id="email">
+       <label>Name <input data-testid="wrapped"></label>
+       <input data-testid="bare">
+       <input data-testid="placeholder" placeholder="Search">
+       <input data-testid="submit" type="submit">
+       <input data-testid="empty-button" type="button">
+       <button data-testid="text">Save</button>
+       <button data-testid="hidden" aria-hidden="true" tabindex="-1">${icon}</button>
+     </main>`,
+  );
+  expectSame(result);
+  const found = ofType(result.node, "unnamed_control");
+  expect(found.map((f) => f.subject?.test_id).sort()).toEqual(["bare", "empty-button", "icon", "icon-titled", "img-link"]);
+  const byId = Object.fromEntries(found.map((f) => [f.subject!.test_id, f]));
+  expect(byId.icon.check).toBe("a11y.unnamed_control");
+  expect(byId.icon.evidence).toMatchObject({ has_title: false, has_icon_only: true });
+  expect(byId["icon-titled"].evidence).toMatchObject({ has_title: true, has_icon_only: true });
+  expect(byId["img-link"].evidence).toMatchObject({ has_icon_only: true });
+  expect(byId.bare.evidence).toMatchObject({ has_title: false, has_icon_only: false });
+  expect(byId.icon.fingerprint).toBe(fp("unnamed_control", ["icon", null]));
+});

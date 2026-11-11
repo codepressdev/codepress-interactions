@@ -96,4 +96,28 @@ export interface SnapshotBody {
     element: number[];
     other: number[];
   };
+  /**
+   * Text below 4.5:1 (the highest WCAG AA threshold): the contrast of the text
+   * each listed element holds itself (direct text nodes), measured in the
+   * page; colours are never recorded. Only elements whose background could be
+   * worked out are listed; disabled controls and text hidden from assistive
+   * technology are not. Absent before 1.2.0.
+   */
+  contrast?: {
+    element: number[];
+    /** Contrast ratio, rounded down to 2 decimal places. */
+    ratio: number[];
+    /** Computed font size, CSS px, rounded to 0.01. */
+    font_px: number[];
+    /** Computed font weight 700 or more. */
+    bold: boolean[];
+  };
+  /** Shown controls whose accessible name is empty. Absent before 1.2.0. */
+  unnamed_controls?: {
+    element: number[];
+    /** The control has a title attribute (blank, or it would have named the control). */
+    has_title: boolean[];
+    /** The control holds images or SVG and no text. */
+    icon_only: boolean[];
+  };
 }

@@ -1,7 +1,10 @@
 // Overhead benchmark for @codepress/interactions-browser: bundle size, snapshot
 // walk cost, UI check cost, click listener latency, body size and idle cost, in
 // headless Chromium with and without 4x CPU throttling. Numbers are machine
-// specific; the machine is printed with them. Usage: node scripts/overhead.mjs [--runs 5]
+// specific; the machine is printed with them.
+// Usage: node scripts/overhead.mjs [--runs 5] [--sizes 500,2000] [--throttles 1,4] [--snapshots-only]
+//   [--options '{"detect":{"checks":["overlap"]}}'] (SDK options for the snapshot runs)
+//   [--src ../other-checkout/packages/browser/src] (measure another checkout, e.g. before a change)
 import { chromium } from "@playwright/test";
 import { buildSync } from "esbuild";
 import { execSync } from "node:child_process";
@@ -11,15 +14,20 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = (file) => resolve(here, "../src", file);
-const arg = (name, fallback) => {
+const text = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
-  return i > 0 ? Number(process.argv[i + 1]) : fallback;
+  return i > 0 ? process.argv[i + 1] : fallback;
 };
+const arg = (name, fallback) => Number(text(name, fallback));
+const list = (name, fallback) => text(name, fallback.join(",")).split(",").map(Number);
+const SRC = resolve(text("src", resolve(here, "../src")));
+const src = (file) => resolve(SRC, file);
 const RUNS = arg("runs", 5);
 const CLICKS = arg("clicks", 200);
-const SIZES = [500, 2000, 5000];
-const THROTTLES = [1, 4];
+const SIZES = list("sizes", [500, 2000, 5000]);
+const THROTTLES = list("throttles", [1, 4]);
+const OPTIONS = JSON.parse(text("options", "{}"));
+const SNAPSHOTS_ONLY = process.argv.includes("--snapshots-only");
 const ORIGIN = "https://app.test";
 
 const bundle = (entry, options) =>
@@ -129,7 +137,7 @@ async function openPage(body, { throttle, sdk = true, options = {}, initScript }
 // 2, 3, 5. One on-demand snapshot per fresh page, traced. The SDK's own idle-time
 // checks are off here so the trace shows the walk; they are timed on the body after.
 async function snapshotRun(size, throttle) {
-  const options = { routeSettleMs: 3_600_000, flushIntervalMs: 3_600_000, findings: false };
+  const options = { routeSettleMs: 3_600_000, flushIntervalMs: 3_600_000, findings: false, ...OPTIONS };
   const { page, close } = await openPage(pageBody(size), { throttle, options });
   await page.waitForTimeout(300);
   await browser.startTracing(page, { categories: ["disabled-by-default-devtools.timeline", "devtools.timeline"] });
@@ -225,7 +233,7 @@ for (const throttle of THROTTLES) {
     const pick = (key) => runs.map((run) => run[key]);
     results.snapshot[`${throttle}x/${size}`] = {
       elements: runs[0].elements, truncated: runs.some((x) => x.truncated), torn: runs.some((x) => x.torn),
-      wallMs: median(pick("wall")), walkMs: median(pick("walk")), slices: median(pick("slices")),
+      wallMs: median(pick("wall")), walkMs: median(pick("walk")), walkP95Ms: pct(pick("walk"), 0.95), slices: median(pick("slices")),
       sdkMaxSliceMs: Math.max(...pick("sdkMaxSlice")), longestTaskMedianMs: median(pick("longestTask")),
       longestTaskMaxMs: Math.max(...pick("longestTask")), longTasks: pick("longTasks").reduce((a, b) => a + b, 0),
       checksMs: median(runs.map((x) => x.checks.ms)), checksColdMs: median(runs.map((x) => x.checks.cold)),
@@ -233,6 +241,7 @@ for (const throttle of THROTTLES) {
     };
     console.error(`snapshot ${throttle}x ${size}`, results.snapshot[`${throttle}x/${size}`]);
   }
+  if (SNAPSHOTS_ONLY) continue;
   for (const sdk of [false, true]) results.clicks[`${throttle}x/${sdk ? "sdk" : "none"}`] = await clickRun(throttle, sdk);
   for (const sdk of [false, true]) results.idle[`${throttle}x/${sdk ? "sdk" : "none"}`] = await idleRun(throttle, sdk);
   console.error(`clicks/idle ${throttle}x`, results.clicks, results.idle);
@@ -241,16 +250,17 @@ await browser.close();
 
 const out = [];
 out.push(`## Overhead (${machine.cpu}, ${machine.cores} cores, ${machine.os}; Chromium ${machine.chromium} headless; Node ${machine.node}; median of ${RUNS} runs)`, "");
+if (Object.keys(OPTIONS).length) out.push(`SDK options: \`${JSON.stringify(OPTIONS)}\``, "");
 out.push(`Bundle (esbuild --minify, all imports inlined; gzip level 6): main entry ${kb(sizes["index.ts"].min)} min / ${kb(sizes["index.ts"].gzip)} gzip (includes the checks); \`/detect\` ${kb(sizes["detect/index.ts"].min)} / ${kb(sizes["detect/index.ts"].gzip)}.`, "");
-out.push("| CPU | Page elements | Recorded | Walk wall time | Walk CPU | Slices | Longest slice (SDK, max) | Longest main-thread task (median / max) | Long tasks | Checks, one idle task (first run median / max; warm) | Body | Body gzip |");
+out.push("| CPU | Page elements | Recorded | Walk wall time | Walk CPU (median / p95) | Slices | Longest slice (SDK, max) | Longest main-thread task (median / max) | Long tasks | Checks, one idle task (first run median / max; warm) | Body | Body gzip |");
 out.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
 for (const [key, s] of Object.entries(results.snapshot)) {
   const [throttle, size] = key.split("/");
-  out.push(`| ${throttle} | ~${size} | ${s.elements}${s.truncated ? " (truncated)" : ""}${s.torn ? " (torn)" : ""} | ${r(s.wallMs, 1)} ms | ${r(s.walkMs, 1)} ms | ${s.slices} | ${r(s.sdkMaxSliceMs, 1)} ms | ${r(s.longestTaskMedianMs, 1)} / ${r(s.longestTaskMaxMs, 1)} ms | ${s.longTasks} | ${r(s.checksColdMs, 1)} / ${r(s.checksColdMaxMs, 1)} ms; ${r(s.checksMs, 1)} ms | ${kb(s.bytes)} | ${kb(s.gzip)} |`);
+  out.push(`| ${throttle} | ~${size} | ${s.elements}${s.truncated ? " (truncated)" : ""}${s.torn ? " (torn)" : ""} | ${r(s.wallMs, 1)} ms | ${r(s.walkMs, 1)} / ${r(s.walkP95Ms, 1)} ms | ${s.slices} | ${r(s.sdkMaxSliceMs, 1)} ms | ${r(s.longestTaskMedianMs, 1)} / ${r(s.longestTaskMaxMs, 1)} ms | ${s.longTasks} | ${r(s.checksColdMs, 1)} / ${r(s.checksColdMaxMs, 1)} ms; ${r(s.checksMs, 1)} ms | ${kb(s.bytes)} | ${kb(s.gzip)} |`);
 }
-out.push("", "| CPU | Click to app handler, no SDK (median / p95) | With SDK (median / p95) | Idle 5 s main-thread busy, no SDK / SDK | Longest idle task, SDK | Long tasks idle | Timers scheduled idle | Live MutationObservers idle |");
-out.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
-for (const throttle of THROTTLES) {
+if (!SNAPSHOTS_ONLY) out.push("", "| CPU | Click to app handler, no SDK (median / p95) | With SDK (median / p95) | Idle 5 s main-thread busy, no SDK / SDK | Longest idle task, SDK | Long tasks idle | Timers scheduled idle | Live MutationObservers idle |");
+if (!SNAPSHOTS_ONLY) out.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+for (const throttle of SNAPSHOTS_ONLY ? [] : THROTTLES) {
   const [c0, c1, i0, i1] = [results.clicks[`${throttle}x/none`], results.clicks[`${throttle}x/sdk`], results.idle[`${throttle}x/none`], results.idle[`${throttle}x/sdk`]];
   out.push(`| ${throttle}x | ${r(c0.median, 3)} / ${r(c0.p95, 3)} ms | ${r(c1.median, 3)} / ${r(c1.p95, 3)} ms | ${r(i0.busyMs, 1)} / ${r(i1.busyMs, 1)} ms | ${r(i1.longestTask, 1)} ms | ${i1.longTasks} | ${i1.timersScheduled} | ${i1.liveMutationObservers} |`);
 }

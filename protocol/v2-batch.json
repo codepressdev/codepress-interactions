@@ -16,7 +16,7 @@
       "type": "ui.snapshot",
       "attribution": "unknown",
       "data": {
-        "sha256": "71b4c36fe94dea7dbc6bd950e321f3a0fc18e59d0f11ff21ce010472d7524835",
+        "sha256": "c53bf8f9aa1614f0ccd448f4b0063968793cff0a7a934da251171fd0273974c1",
         "trigger": "manual",
         "route_template": "/checkout/:id",
         "viewport_width": 800,
@@ -24,10 +24,10 @@
         "element_count": 12,
         "truncated": false,
         "torn": false,
-        "bytes": 1793,
-        "walk_ms": 1.2,
+        "bytes": 1917,
+        "walk_ms": 1.9,
         "slices": 1,
-        "max_slice_ms": 1.2,
+        "max_slice_ms": 1.9,
         "theme": "light"
       }
     },
@@ -43,7 +43,7 @@
       "type": "perf.summary",
       "attribution": "unknown",
       "data": {
-        "window_ms": 4.9,
+        "window_ms": 6.5,
         "layout_shift_score": 0,
         "layout_shift_count": 0,
         "long_task_count": 0,
@@ -101,7 +101,7 @@
       "data": {
         "outcome": "completed",
         "phase": "http_200",
-        "duration_ms": 12,
+        "duration_ms": 13.4,
         "trace_id": "4bf92f3577b34da6",
         "request_label": "cart.post"
       }
@@ -121,8 +121,8 @@
         "action": "click",
         "control_id": "checkout-save",
         "route_template": "/checkout/:id",
-        "first_feedback_ms": 12.7,
-        "settle_ms": 12.7,
+        "first_feedback_ms": 14.2,
+        "settle_ms": 14.2,
         "mutation_count": 1,
         "request_count": 1,
         "request_failed_count": 0,
@@ -140,8 +140,8 @@
         "overlapped": false,
         "incomplete": false,
         "end_reason": "settled",
-        "before_sha256": "71b4c36fe94dea7dbc6bd950e321f3a0fc18e59d0f11ff21ce010472d7524835",
-        "after_sha256": "d818661ed5f3628dcc382c878a21df6501cfbfc46ecbc22a44865d568e611c59"
+        "before_sha256": "c53bf8f9aa1614f0ccd448f4b0063968793cff0a7a934da251171fd0273974c1",
+        "after_sha256": "0e3d9990c0a42533ce7f92571c81eab0f04f7da7c0bc12d47452a6f4a0a4b6e8"
       }
     },
     {
@@ -156,7 +156,7 @@
       "type": "ui.snapshot",
       "attribution": "unknown",
       "data": {
-        "sha256": "e728bb5c29b3df91a5c5305ce1b3f55d514cda25eed2c0be6039da2ca654f3b8",
+        "sha256": "ac970e0fd4c94821168c811d270bf08a18c11b9117dba7f35da78ad76fcf7df0",
         "trigger": "hover",
         "route_template": "/checkout/:id",
         "viewport_width": 800,
@@ -164,10 +164,10 @@
         "element_count": 13,
         "truncated": false,
         "torn": false,
-        "bytes": 1859,
-        "walk_ms": 0.3,
+        "bytes": 1983,
+        "walk_ms": 0.4,
         "slices": 1,
-        "max_slice_ms": 0.3,
+        "max_slice_ms": 0.4,
         "theme": "light"
       }
     },
@@ -186,8 +186,8 @@
         "kind": "pointer",
         "control_id": "checkout-pay",
         "route_template": "/checkout/:id",
-        "dwell_ms": 153.1,
-        "settle_ms": 0.3,
+        "dwell_ms": 151.6,
+        "settle_ms": 0.5,
         "transition_started": false,
         "animation_started": false,
         "nodes_added": true,
@@ -195,7 +195,7 @@
         "expanded_changed": false,
         "class_changed": false,
         "style_changed": false,
-        "snapshot_sha256": "e728bb5c29b3df91a5c5305ce1b3f55d514cda25eed2c0be6039da2ca654f3b8",
+        "snapshot_sha256": "ac970e0fd4c94821168c811d270bf08a18c11b9117dba7f35da78ad76fcf7df0",
         "has_hover_handler": null
       }
     },
@@ -208,6 +208,31 @@
       "source_instance_id": "browser-golden",
       "sequence": 9,
       "occurred_at": "2026-11-01T12:00:00.400Z",
+      "type": "perf.summary",
+      "attribution": "unknown",
+      "data": {
+        "window_ms": 1285.3,
+        "layout_shift_score": 0,
+        "layout_shift_count": 0,
+        "long_task_count": 0,
+        "long_task_ms": 0,
+        "event_timing_count": 0,
+        "event_timing_max_ms": 0,
+        "image_error_count": 0,
+        "uncaught_error_count": 0,
+        "unavailable": [],
+        "contrast_unknown": 1
+      }
+    },
+    {
+      "event_id": "00000000-0000-4000-8000-000000000010",
+      "schema_version": 2,
+      "interaction_id": null,
+      "operation_id": null,
+      "source": "browser",
+      "source_instance_id": "browser-golden",
+      "sequence": 10,
+      "occurred_at": "2026-11-01T12:00:00.450Z",
       "type": "ui.finding",
       "attribution": "unknown",
       "data": {
@@ -215,7 +240,7 @@
         "check_version": 1,
         "fingerprint": "2277b3c669e11ecf600885b4b162359c",
         "route_template": "/checkout/:id",
-        "snapshot_sha256": "71b4c36fe94dea7dbc6bd950e321f3a0fc18e59d0f11ff21ce010472d7524835",
+        "snapshot_sha256": "c53bf8f9aa1614f0ccd448f4b0063968793cff0a7a934da251171fd0273974c1",
         "viewport_width": 800,
         "viewport_height": 600,
         "subject": {

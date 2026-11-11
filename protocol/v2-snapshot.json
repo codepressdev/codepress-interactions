@@ -315,5 +315,16 @@
     "other": [
       10
     ]
+  },
+  "contrast": {
+    "element": [],
+    "ratio": [],
+    "font_px": [],
+    "bold": []
+  },
+  "unnamed_controls": {
+    "element": [],
+    "has_title": [],
+    "icon_only": []
   }
 }

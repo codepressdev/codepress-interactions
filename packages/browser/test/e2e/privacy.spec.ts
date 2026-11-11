@@ -67,6 +67,43 @@ test("a sentinel in text, values, title, href query and alt appears nowhere in s
   expect(out.batches[0].release).toBe("web-1.2.3");
 });
 
+// Colours and names are read in the page for contrast and accessible names; only numbers and booleans may leave it.
+const COLOURS = ["#1a2b3c", "rgb(26, 43, 60)", "26, 43, 60", "#d4c5b6", "212, 197, 182", "rgba(9, 8, 7, 0.5)", "9, 8, 7"];
+
+test("colour values, labels and names read for the a11y checks appear nowhere in sink output", async ({ page }) => {
+  await openPage(
+    page,
+    `<main style="background:#d4c5b6;padding:16px">
+       <p style="color:#1a2b3c">${S} readable paragraph</p>
+       <p style="color:#c9bbac">${S} faint paragraph</p>
+       <div style="background:rgba(9, 8, 7, 0.5)"><span style="color:#0f0e0d">${S} overlay</span></div>
+       <label for="mail">${S} label text</label><input id="mail">
+       <span id="labeller">${S} labelled-by text</span><button aria-labelledby="labeller">x</button>
+       <button aria-label="${S} aria name"><svg width="10" height="10"></svg></button>
+       <button title=" "><svg width="10" height="10"></svg></button>
+       <a href="#"><img alt="${S} alt name" width="10" height="10" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a>
+     </main>`,
+  );
+  await init(page);
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await expect.poll(async () => events(await output(page)).filter((e) => e.type === "ui.finding").length).toBeGreaterThanOrEqual(2);
+  const out = await output(page);
+  expectValid(out);
+  const checks = events(out).filter((e) => e.type === "ui.finding").map((e) => e.data.check);
+  expect(checks).toContain("a11y.low_contrast");
+  expect(checks).toContain("a11y.unnamed_control");
+  const body = out.snapshots[0].body;
+  expect(body.contrast.element.length).toBeGreaterThanOrEqual(1);
+  // Contrast and name tables hold numbers and booleans only.
+  for (const table of [body.contrast, body.unnamed_controls])
+    for (const column of Object.values(table) as unknown[][])
+      for (const value of column) expect(["number", "boolean"]).toContain(typeof value);
+  const everything = [...out.serialized, ...out.snapshots.map((s) => s.serialized)].join("\n");
+  expect(everything.toLowerCase()).not.toContain(S.toLowerCase());
+  for (const colour of COLOURS) expect(everything, colour).not.toContain(colour);
+  for (const word of ["rgb", "rgba", "#1a2b3c", "color("]) expect(everything.toLowerCase(), word).not.toContain(word);
+});
+
 // Lowercase slugs look like route words, so only an explicit allowlist keeps a segment.
 const SLUGS = ["jane-smith", "acme-corp", "my-secret-post"];
 
