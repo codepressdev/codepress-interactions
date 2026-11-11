@@ -446,3 +446,74 @@ test("expectNoSweepFindings fails with one line per finding", async ({ page }) =
   const { findings } = await sweepInteractions(page);
   await expectNoSweepFindings(page, { ignoreFingerprints: findings.map((f) => f.fingerprint) });
 });
+
+test("sweep: a tooltip that fades in with a CSS transition on hover only is hover-only content; one that also fades in on focus is not", async ({ page }) => {
+  const FADE = `
+<style>
+  .tip-wrap { position: relative; display: inline-block; margin: 40px }
+  .tip { position: absolute; left: 0; top: 44px; width: 160px; padding: 4px; background: #222; color: #fff;
+         visibility: hidden; opacity: 0; transform: translateY(-6px); transition: opacity 400ms, transform 400ms, visibility 400ms }
+  .hover-only:hover + .tip, .both:hover + .tip, .both:focus-visible + .tip { visibility: visible; opacity: 1; transform: none }
+</style>
+<span class="tip-wrap"><button data-testid="fade-hover" class="hover-only">Hover</button><span class="tip">Opens the guide</span></span>
+<span class="tip-wrap"><button data-testid="fade-both" class="both">Both</button><span class="tip">Opens the guide</span></span>`;
+  await serve(page, FADE);
+  // The page counts the transitions it starts, so the test knows the hover and focus ran them.
+  await page.evaluate(() => {
+    (window as any).__runs = 0;
+    document.addEventListener("transitionrun", () => (window as any).__runs++, true);
+  });
+  const result = await sweepInteractions(page);
+  expect(await page.evaluate(() => (window as any).__runs)).toBeGreaterThan(0);
+  expect(result.controls).toBe(2);
+  expect(result.findings.filter((f) => f.check === "a11y.hover_only_content").map((f) => f.control_id)).toEqual(["fade-hover"]);
+});
+
+test("sweep: a hover whose only sign of life within the settle time is a transition starting is followed until its tooltip shows", async ({ page }) => {
+  // 250 ms after the pointer enters, the page flips a class on an element unrelated to the control,
+  // which starts a 20 ms transition on the control. No mutation the hover follow-through counts
+  // happens before the tooltip shows 150 ms after that transition ends. Only the transition's start,
+  // seen through the motion listeners, keeps the hover open past its 300 ms settle time: without
+  // it the hover settles at about 330 ms (30 ms dwell + 300 ms), before the tooltip shows at about 420 ms.
+  const LATE = `
+<style>
+  .tip-wrap { position: relative; display: inline-block; margin: 40px }
+  .late { transition: background-color 20ms }
+  #flag.on ~ .tip-wrap .late { background-color: #ffd }
+  .tip { position: absolute; left: 0; top: 44px; width: 160px; padding: 4px; background: #222; color: #fff; display: none }
+  .tip.shown { display: block }
+</style>
+<i id="flag"></i>
+<span class="tip-wrap"><button data-testid="late" class="late">Help</button><span class="tip">Opens the guide</span></span>`;
+  await serve(page, LATE);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__runs = 0;
+    w.__shown = 0;
+    const flag = document.getElementById("flag")!;
+    const button = document.querySelector(".late")!;
+    const tip = document.querySelector(".tip")!;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    button.addEventListener("transitionrun", () => w.__runs++);
+    button.addEventListener("pointerenter", () => {
+      timer = setTimeout(() => flag.classList.add("on"), 250);
+    });
+    button.addEventListener("transitionend", () => {
+      if (!flag.classList.contains("on")) return;
+      timer = setTimeout(() => {
+        tip.classList.add("shown");
+        w.__shown++;
+      }, 150);
+    });
+    button.addEventListener("pointerleave", () => {
+      clearTimeout(timer);
+      flag.classList.remove("on");
+      tip.classList.remove("shown");
+    });
+  });
+  const result = await sweepInteractions(page, { settleMs: 300 });
+  expect(result.controls).toBe(1);
+  expect(result.findings.filter((f) => f.check === "a11y.hover_only_content").map((f) => f.control_id)).toEqual(["late"]);
+  expect(await page.evaluate(() => (window as any).__runs)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => (window as any).__shown)).toBeGreaterThan(0);
+});

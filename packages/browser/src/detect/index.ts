@@ -8,6 +8,7 @@
  */
 import type { SnapshotBody } from "../format";
 import { layoutFindings } from "./layout";
+import { motionFindings, type MotionRun } from "./motion";
 import { timelineFindings, type TimelineEvent } from "./timeline";
 import { CHECK_NAMES, resolveOptions, type DetectOptions, type Finding, type FindingData } from "./types";
 
@@ -15,6 +16,7 @@ export { focusIndicatorFindings, hoverOnlyFindings, type FocusObservation, type 
 export { CHECK_IDS, CHECK_NAMES, CHECK_VERSION, toFindingData } from "./types";
 export type { CheckName, DetectOptions, ElementRef, Evidence, Finding, FindingData } from "./types";
 export type { TimelineEvent } from "./timeline";
+export type { MotionRun } from "./motion";
 export { fingerprint, sha256HexSync, viewportBand } from "./fingerprint";
 export type { SnapshotBody } from "../format";
 
@@ -47,9 +49,18 @@ export function checkEvents(
   return sortFindings(timelineFindings(Array.isArray(events) ? events : [], resolveOptions(options), bodies));
 }
 
-/** Every check over snapshots and a timeline together, sorted. */
+/**
+ * Motion checks (CSS animations and transitions) over observed runs, sorted.
+ * The SDK observes runs in the page and runs these itself; a test or a
+ * service can pass runs it built.
+ */
+export function checkMotion(runs: readonly MotionRun[], options: DetectOptions = {}): Finding[] {
+  return sortFindings(motionFindings(Array.isArray(runs) ? runs : [], resolveOptions(options)));
+}
+
+/** Every check over snapshots, a timeline and motion runs together, sorted. */
 export function detect(
-  input: { snapshots?: readonly SnapshotInput[]; events?: readonly TimelineEvent[] },
+  input: { snapshots?: readonly SnapshotInput[]; events?: readonly TimelineEvent[]; motion?: readonly MotionRun[] },
   options: DetectOptions = {},
 ): Finding[] {
   const resolved = resolveOptions(options);
@@ -59,6 +70,7 @@ export function detect(
   const bodies = new Map<string, SnapshotBody>();
   for (const snapshot of input.snapshots ?? []) if (snapshot?.sha256) bodies.set(snapshot.sha256, snapshot.body);
   findings.push(...timelineFindings(input.events ?? [], resolved, bodies));
+  findings.push(...motionFindings(Array.isArray(input.motion) ? input.motion : [], resolved));
   return sortFindings(findings);
 }
 

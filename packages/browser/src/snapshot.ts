@@ -153,13 +153,13 @@ function implicitRole(element: Element): string | null {
   return IMPLICIT_ROLES[tag] ?? null;
 }
 
-function roleOf(element: Element): string | null {
+export function roleOf(element: Element): string | null {
   const explicit = element.getAttribute("role")?.trim().split(/\s+/)[0]?.toLowerCase();
   if (explicit && /^[a-z]{1,32}$/.test(explicit)) return explicit;
   return implicitRole(element);
 }
 
-function tagOf(element: Element): string {
+export function tagOf(element: Element): string {
   const tag = element.localName.toLowerCase();
   return /^[a-z][a-z0-9-]{0,63}$/.test(tag) ? tag : "unknown";
 }

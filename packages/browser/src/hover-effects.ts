@@ -53,6 +53,12 @@ export interface HoverHost {
   silent(kind: HoverKind): void;
   /** Keyboard focus showed no visible change on the element or its wrappers. */
   noFocusIndicator(controlId: string, routeTemplate: string | null, wrappers: number): void;
+  /**
+   * Subscribes to animation and transition starts (the runtime passes the
+   * motion tracker's, so the page has one set of motion listeners); returns
+   * the unsubscribe. Without it, starts are not seen.
+   */
+  onMotion?(listener: (target: Element, kind: "transition" | "animation") => void): () => void;
 }
 
 interface Effects {
@@ -153,8 +159,14 @@ export class HoverEffects {
         // Tab moves focus after its keydown: the next focusin opens the next window.
         if (focus) this.focus.end(focus, "input");
       });
-    listen("transitionrun", (event) => this.motion(event, "transition"));
-    listen("animationstart", (event) => this.motion(event, "animation"));
+    const unsubscribe = this.host.onMotion?.((target, kind) => {
+      try {
+        this.motion(target, kind);
+      } catch {
+        /* Never affect the page. */
+      }
+    });
+    if (unsubscribe) this.removals.push(unsubscribe);
     listen("toggle", (event) => {
       if ((event as Event & { newState?: string }).newState !== "open") return;
       for (const window of this.open()) this.mark(window, "overlay");
@@ -349,9 +361,7 @@ export class HoverEffects {
     (window.kind === "pointer" ? this.pointer : this.focus).effect(window, at);
   }
 
-  private motion(event: Event, kind: "transition" | "animation"): void {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
+  private motion(target: Element, kind: "transition" | "animation"): void {
     const check = this.focusCheck;
     if (check && (target === check.element || target.contains(check.element))) check.motion = true;
     for (const window of this.open()) if (this.related(window, target)) this.mark(window, kind);

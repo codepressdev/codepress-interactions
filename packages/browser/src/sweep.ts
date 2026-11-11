@@ -9,7 +9,9 @@
  * overlay has text is read in the page and never sent.
  */
 import { OVERLAYS, isOverlay } from "./follow";
+import { resolveOptions } from "./detect/types";
 import { HoverEffects } from "./hover-effects";
+import { MotionTracker } from "./motion";
 import { INTERACTIVE } from "./snapshot";
 import { controlIdOf, type TestIdFilter } from "./util";
 
@@ -61,6 +63,8 @@ type Kind = "pointer" | "focus";
 export class Sweep {
   readonly root: Element;
   private hovers: HoverEffects;
+  /** Animation and transition starts for the hover follow-through (no motion checks run here). */
+  private motion: MotionTracker;
   private ignore: string;
   private testId?: TestIdFilter;
   private settleMs: number;
@@ -79,6 +83,14 @@ export class Sweep {
     this.ignore = ["[data-layout-ignore]", "[data-interactions-exclude]", setup.ignore].filter(Boolean).join(",");
     this.testId = setup.testId;
     this.settleMs = Math.max(1, Math.floor(setup.settleMs));
+    this.motion = new MotionTracker({
+      root,
+      options: resolveOptions({ checks: [] }),
+      route: () => null,
+      snapshotHash: () => null,
+      emit: () => {},
+    });
+    this.motion.start();
     this.hovers = new HoverEffects({
       root,
       dwellMs: DWELL_MS,
@@ -95,6 +107,7 @@ export class Sweep {
       emit: (data) => this.report(data.kind),
       silent: (kind) => this.report(kind),
       noFocusIndicator: () => {},
+      onMotion: (listener) => this.motion.onStart(listener),
     });
     this.hovers.start();
   }
@@ -204,6 +217,7 @@ export class Sweep {
   stop(): void {
     this.disarm();
     this.hovers.stop();
+    this.motion.stop();
     this.waiting?.resolve();
     this.waiting = null;
   }

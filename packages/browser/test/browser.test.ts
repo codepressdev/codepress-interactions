@@ -476,3 +476,25 @@ describe("finding fingerprint memory", () => {
     // The FIFO it replaces resent all 2500 on every run.
   });
 });
+describe("recent motion", () => {
+  it("counts animation and transition starts on an element's subtree since a time, until shutdown", () => {
+    const handle = init();
+    document.body.innerHTML = '<div id="menu"><span id="icon"></span></div><p id="other"></p>';
+    const runtime = (window as unknown as Record<symbol, any>)[Symbol.for("@codepress/interactions-browser/v1")];
+    const since = performance.now();
+    const fire = (id: string, type: string) =>
+      document.getElementById(id)!.dispatchEvent(new Event(type, { bubbles: true }));
+    fire("icon", "transitionrun");
+    fire("icon", "transitionend");
+    fire("menu", "animationstart");
+    fire("other", "transitionrun");
+    const menu = document.getElementById("menu")!;
+    expect(runtime.recentMotion(menu, since)).toEqual({ animations: 1, transitions: 1 });
+    expect(runtime.recentMotion(document.getElementById("icon")!, since)).toEqual({ animations: 0, transitions: 1 });
+    expect(runtime.recentMotion(menu, performance.now() + 1)).toEqual({ animations: 0, transitions: 0 });
+    handle.shutdown();
+    handles = [];
+    fire("icon", "transitionrun");
+    expect(runtime.recentMotion(menu, since)).toEqual({ animations: 0, transitions: 0 });
+  });
+});

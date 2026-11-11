@@ -1244,3 +1244,246 @@ test("unnamed_control: an icon-only button without a name is reported; named con
   expect(byId.bare.evidence).toMatchObject({ has_title: false, has_icon_only: false });
   expect(byId.icon.fingerprint).toBe(fp("unnamed_control", ["icon", null]));
 });
+
+// ---- Motion checks ----------------------------------------------------------------
+
+const sentOf = async (page: Page, check: string) =>
+  findingsOf(await output(page))
+    .filter((e) => e.data.check === check)
+    .map((e) => e.data);
+
+/** Adds `on` to each element and resolves when every one has sent `type` (in page). */
+const toggleAndWait = (page: Page, ids: string[], type: string) =>
+  page.evaluate(
+    ({ ids, type }) =>
+      Promise.all(
+        ids.map((id) => {
+          const el = document.querySelector(`[data-testid="${id}"]`)!;
+          const done = new Promise<void>((resolve) => el.addEventListener(type, () => resolve(), { once: true }));
+          el.classList.add("on");
+          return done;
+        }),
+      ),
+    { ids, type },
+  );
+
+test("layout_animation: a width transition is reported, a transform transition is not", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+      #grow{width:100px;height:40px;background:#36f;transition:width 300ms linear}
+      #grow.on{width:200px}
+      #slide{width:100px;height:40px;background:#f63;transition:transform 300ms linear}
+      #slide.on{transform:translateX(100px)}
+    </style>
+    <div id="grow" data-testid="grow"></div><div id="slide" data-testid="slide"></div>`,
+  );
+  await init(page);
+  await toggleAndWait(page, ["grow", "slide"], "transitionend");
+  await expect.poll(async () => (await sentOf(page, "motion.layout_animation")).length).toBe(1);
+  const out = await output(page);
+  expectValid(out);
+  const [found] = await sentOf(page, "motion.layout_animation");
+  // Both runs were resolved in the same frame: the transform one is a negative, not a miss.
+  expect(found.subject).toMatchObject({ test_id: "grow", stable_id: "grow", tag: "div", index: -1 });
+  expect(found.fingerprint).toBe(fp("layout_animation", ["grow", null]));
+  expect(found.evidence).toMatchObject({ duration_ms: 300, layout_props: 1, transition: true, infinite: false });
+  // The box is read in the first frame of the transition: at least the starting 100 × 40.
+  expect(found.evidence.element_area_px).toBeGreaterThanOrEqual(4000);
+  expect(found.evidence.element_area_px).toBeLessThan(8000);
+  expect(found.viewport_width).toBe(1280);
+});
+
+test("layout_animation: a keyframe animation on top is found from its keyframes", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+      @keyframes drop{from{top:0}to{top:100px}}
+      #drop{position:relative;width:80px;height:80px;background:#3a3}
+      #drop.on{animation:drop 400ms ease-out 1}
+    </style>
+    <div id="drop" data-testid="drop"></div>`,
+  );
+  await init(page);
+  await toggleAndWait(page, ["drop"], "animationend");
+  await expect.poll(async () => (await sentOf(page, "motion.layout_animation")).length).toBe(1);
+  const [found] = await sentOf(page, "motion.layout_animation");
+  expect(found.subject.test_id).toBe("drop");
+  expect(found.evidence).toMatchObject({ duration_ms: 400, layout_props: 1, transition: false });
+});
+
+test("stuck_animation: a 20 s animation still running after stuckAnimationMs; one that ends in 300 ms is not", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+      @keyframes fade{from{transform:scale(1)}to{transform:scale(1.1)}}
+      @keyframes grow{from{width:10px}to{width:60px}}
+      .box{width:60px;height:60px;background:#888}
+      #long.on{animation:fade 20s linear 1}
+      #short.on{animation:fade 300ms linear 1}
+      #probe.on{animation:grow 300ms linear 1}
+    </style>
+    <div class="box" id="long" data-testid="long"></div><div class="box" id="short" data-testid="short"></div>
+    <div class="box" id="probe" data-testid="probe"></div>`,
+  );
+  await init(page, { detect: { stuckAnimationMs: 500 } });
+  await toggleAndWait(page, ["long"], "animationstart");
+  await toggleAndWait(page, ["short"], "animationend");
+  await expect.poll(async () => (await sentOf(page, "motion.stuck_animation")).length, { timeout: 5000 }).toBe(1);
+  const [found] = await sentOf(page, "motion.stuck_animation");
+  expect(found.subject.test_id).toBe("long");
+  expect(found.fingerprint).toBe(fp("stuck_animation", ["long", null]));
+  expect(found.evidence).toMatchObject({ duration_ms: 20000, transition: false });
+  expect(found.evidence.elapsed_ms).toBeGreaterThanOrEqual(500);
+  // The short one ended before its deadline; its sweep came and went with the long one's.
+  expect((await sentOf(page, "motion.stuck_animation")).map((f) => f.subject.test_id)).toEqual(["long"]);
+});
+
+test("offscreen_loop: infinite spinners under aria-hidden or display:none; a visible spinner is not", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+      @keyframes spin{to{transform:rotate(360deg)}}
+      .spin{width:24px;height:24px;border:3px solid #888;border-top-color:transparent;border-radius:50%;animation:spin 800ms linear infinite}
+    </style>
+    <div class="spin" data-testid="shown-spin"></div>
+    <div aria-hidden="true"><div class="spin" data-testid="muted-spin"></div></div>
+    <div style="display:none"><div id="gone" data-testid="gone-spin" style="width:24px;height:24px"></div></div>
+    <script>
+      // CSS animations do not run under display:none; a Web Animations API loop does.
+      document.getElementById("gone").animate([{ transform: "rotate(0)" }, { transform: "rotate(360deg)" }], { duration: 800, iterations: Infinity });
+    </script>`,
+  );
+  await init(page, { detect: { offscreenLoopMs: 300 } });
+  await expect
+    .poll(async () => (await sentOf(page, "motion.offscreen_loop")).map((f) => f.subject.test_id).sort(), { timeout: 5000 })
+    .toEqual(["gone-spin", "muted-spin"]);
+  const found = await sentOf(page, "motion.offscreen_loop");
+  const muted = found.find((f) => f.subject.test_id === "muted-spin");
+  const gone = found.find((f) => f.subject.test_id === "gone-spin");
+  expect(muted.evidence).toMatchObject({ aria_hidden: true, zero_box: false });
+  expect(gone.evidence).toMatchObject({ zero_box: true, aria_hidden: false });
+  expect(muted.evidence.elapsed_ms).toBeGreaterThan(300);
+  expect(muted.fingerprint).toBe(fp("offscreen_loop", ["muted-spin", null]));
+  // All three loops are looked at in the same sweep: the visible one was looked at and passed.
+  expect(found.map((f) => f.subject.test_id)).not.toContain("shown-spin");
+  expectValid(await output(page));
+});
+
+test("offscreen_loop: a spinner that starts after init, then is hidden with visibility, is found on a later sweep", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+      @keyframes spin{to{transform:rotate(360deg)}}
+      #late{width:24px;height:24px;background:#888}
+      #late.on{animation:spin 800ms linear infinite}
+      #late.gone{visibility:hidden}
+    </style>
+    <div id="late" data-testid="late"></div>`,
+  );
+  await init(page, { detect: { offscreenLoopMs: 200 } });
+  await toggleAndWait(page, ["late"], "animationstart");
+  await page.evaluate(() => document.getElementById("late")!.classList.add("gone"));
+  await expect.poll(async () => (await sentOf(page, "motion.offscreen_loop")).length, { timeout: 5000 }).toBe(1);
+  const [found] = await sentOf(page, "motion.offscreen_loop");
+  expect(found.evidence).toMatchObject({ visibility_hidden: true, zero_box: false, aria_hidden: false });
+});
+
+test("janky_animation: a long animation frame during a visible animation", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+      @keyframes pulse{from{transform:scale(1)}to{transform:scale(1.2)}}
+      #pulse{width:80px;height:80px;background:#c3c}
+      #pulse.on{animation:pulse 600ms linear infinite alternate}
+    </style>
+    <div id="pulse" data-testid="pulse"></div>`,
+  );
+  const supported = await page.evaluate(() => PerformanceObserver.supportedEntryTypes.includes("long-animation-frame"));
+  test.skip(!supported, "long-animation-frame is not reported by this browser");
+  await init(page);
+  await toggleAndWait(page, ["pulse"], "animationstart");
+  // Block the main thread inside an animation frame for 200 ms.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => {
+          const end = performance.now() + 200;
+          while (performance.now() < end) {}
+          setTimeout(resolve, 0);
+        }),
+      ),
+  );
+  await expect.poll(async () => (await sentOf(page, "motion.janky_animation")).length, { timeout: 5000 }).toBe(1);
+  const [found] = await sentOf(page, "motion.janky_animation");
+  expect(found.subject.test_id).toBe("pulse");
+  expect(found.evidence.long_frames).toBeGreaterThanOrEqual(1);
+  expect(found.evidence.max_blocking_ms).toBeGreaterThan(50);
+  expect(found.evidence).toMatchObject({ infinite: true });
+});
+
+const SLIDE_IN = `<style>
+  #panel{position:fixed;left:0;top:0;width:600px;height:500px;background:#eee;transform:translateX(-100%);transition:transform 500ms ease-out}
+  #panel.on{transform:none}
+  #probe{width:40px;height:40px;background:#36f;transition:width 500ms}
+  #probe.on{width:80px}
+</style>
+<div id="panel" data-testid="panel"></div><div id="probe" data-testid="probe"></div>`;
+
+for (const reduce of [true, false]) {
+  test(`reduced_motion_ignored: a large slide-in ${reduce ? "is reported with" : "is not reported without"} prefers-reduced-motion: reduce`, async ({ page }) => {
+    if (reduce) await page.emulateMedia({ reducedMotion: "reduce" });
+    await openPage(page, SLIDE_IN);
+    await init(page);
+    await toggleAndWait(page, ["panel", "probe"], "transitionend");
+    // The probe's width transition was resolved in the same frame as the panel's.
+    await expect.poll(async () => (await sentOf(page, "motion.layout_animation")).length).toBe(1);
+    const found = await sentOf(page, "a11y.reduced_motion_ignored");
+    if (!reduce) {
+      expect(found).toEqual([]);
+      return;
+    }
+    expect(found).toHaveLength(1);
+    expect(found[0].subject.test_id).toBe("panel");
+    expect(found[0].fingerprint).toBe(fp("reduced_motion_ignored", ["panel", null]));
+    expect(found[0].evidence).toMatchObject({ duration_ms: 500, motion_props: 1, element_area_px: 300000, transition: true });
+    expect(found[0].evidence.viewport_area_ratio).toBeCloseTo(300000 / (1280 * 800), 3);
+  });
+}
+
+test("motion checks are switched off through the checks option", async ({ page }) => {
+  await openPage(page, SLIDE_IN);
+  await init(page, { detect: { checks: ["overlap", "reduced_motion_ignored"] } });
+  await toggleAndWait(page, ["probe"], "transitionend");
+  await idle(page);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  expect(await sentOf(page, "motion.layout_animation")).toEqual([]);
+});
+
+test("a thousand spinners: findings stay bounded", async ({ page }) => {
+  const letters = (i: number) => String.fromCharCode(97 + (i % 26)) + String.fromCharCode(97 + Math.floor(i / 26) % 26);
+  const spinners = (n: number, ids: boolean) =>
+    Array.from({ length: n }, (_, i) => `<i class="spin"${ids ? ` data-testid="s-${letters(i)}"` : ""}></i>`).join("");
+  await openPage(
+    page,
+    `<style>
+      @keyframes spin{to{transform:rotate(360deg)}}
+      .spin{display:inline-block;width:8px;height:8px;background:#888}
+      .go .spin{animation:spin 800ms linear infinite}
+    </style>
+    <div id="a">${spinners(250, false)}</div>
+    <div id="b" aria-hidden="true">${spinners(250, false)}</div>
+    <div id="c" aria-hidden="true">${spinners(500, true)}</div>`,
+  );
+  const { errors } = { errors: [] as string[] };
+  page.on("pageerror", (e) => errors.push(e.message));
+  await init(page, { detect: { offscreenLoopMs: 200 } });
+  await page.evaluate(() => document.body.classList.add("go"));
+  // 500 different hidden IDs, at most 50 findings per check per page session.
+  await expect.poll(async () => (await sentOf(page, "motion.offscreen_loop")).length, { timeout: 15000 }).toBe(50);
+  const found = await sentOf(page, "motion.offscreen_loop");
+  expect(new Set(found.map((f) => f.fingerprint)).size).toBe(50);
+  for (const f of found) expect(f.evidence.aria_hidden).toBe(true);
+  expect(errors).toEqual([]);
+  expectValid(await output(page));
+});
