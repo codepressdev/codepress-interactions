@@ -215,6 +215,30 @@ test("keyboard focus that opens a tooltip records a focus hover with a focus sna
   expect(snapshot.data.trigger).toBe("focus");
 });
 
+test("a testId hook that replaces the element under a resting pointer is called once, not in a loop", async ({ page }) => {
+  await openPage(page, `<button data-testid="save-button" style="width:200px;height:60px">Go</button>`);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.calls = 0;
+    w.handle = w.CodepressInteractions.initInteractions({
+      sink: w.sink,
+      flushIntervalMs: 3_600_000,
+      routeSettleMs: 3_600_000,
+      testId: (value: string, element: Element) => {
+        w.calls++;
+        const clone = element.cloneNode(true) as Element;
+        clone.setAttribute("aria-busy", "true");
+        element.replaceWith(clone);
+        return value;
+      },
+    });
+  });
+  await page.mouse.move(400, 400);
+  await page.mouse.move(50, 30);
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => (window as any).calls)).toBeLessThanOrEqual(2);
+});
+
 test("hovers: false turns hover and focus following off", async ({ page }) => {
   await openPage(page, TOOLTIP);
   await init(page, { hoverSettleMs: 200, hovers: false });
@@ -225,5 +249,14 @@ test("hovers: false turns hover and focus following off", async ({ page }) => {
   const out = await output(page);
   expect(hovers(out)).toHaveLength(0);
   expect(silent(out, "hovers_silent") + silent(out, "focus_silent")).toBe(0);
+  // Summaries look exactly as before 1.2.0: the two counts are absent, not 0.
+  // The first snapshot always sends a summary (which signals the browser has).
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await expect.poll(async () => events(await output(page)).filter((e) => e.type === "perf.summary").length).toBeGreaterThan(0);
+  const summaries = events(await output(page)).filter((e) => e.type === "perf.summary");
+  for (const summary of summaries) {
+    expect(summary.data).not.toHaveProperty("hovers_silent");
+    expect(summary.data).not.toHaveProperty("focus_silent");
+  }
   expect(await page.evaluate(() => (window as any).handle.getDiagnostics().adapters)).not.toContain("hover_effects");
 });

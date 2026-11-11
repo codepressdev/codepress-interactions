@@ -72,6 +72,12 @@ export interface FollowWindow {
   lastEffect: number;
   /** Observed requests still running: a window never settles while one is. */
   inflight: number;
+  /**
+   * false while the window may not settle yet (a hover still inside its dwell):
+   * effects are recorded but start no quiet timer, and whoever commits it calls
+   * `scheduleQuiet`. Absent means committed.
+   */
+  committed?: boolean;
   quiet?: ReturnType<typeof setTimeout>;
   hard?: ReturnType<typeof setTimeout>;
 }
@@ -96,7 +102,7 @@ export class Follower<W extends FollowWindow, R extends string = never> {
 
   /**
    * Opens `window` and starts observing. With `settle` false the quiet timer
-   * waits for `scheduleQuiet` (a hover still inside its dwell).
+   * waits for `scheduleQuiet` (a hover still inside its dwell; see `committed`).
    */
   open(window: W, settle = true): void {
     if (this.current) this.end(this.current, "overlapped");
@@ -118,7 +124,7 @@ export class Follower<W extends FollowWindow, R extends string = never> {
   /** Something happened in `window`: it settles `settleMs` after the last effect. */
   effect(window: W, at = now()): void {
     window.lastEffect = at;
-    if (window.inflight === 0) this.scheduleQuiet(window);
+    if (window.inflight === 0 && window.committed !== false) this.scheduleQuiet(window);
   }
 
   scheduleQuiet(window: W): void {

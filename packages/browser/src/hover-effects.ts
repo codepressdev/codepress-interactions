@@ -107,6 +107,8 @@ export class HoverEffects {
   private minute: number[] = [];
   private hoverRules = new HoverRules();
   private focusCheck: FocusCheck | null = null;
+  /** Where the last mouse or pen pointerover happened. */
+  private lastOver: { x: number; y: number } | null = null;
 
   constructor(private host: HoverHost) {
     const make = () =>
@@ -186,6 +188,14 @@ export class HoverEffects {
     if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
+    // A pointerover where the last one was is the page changing under a still
+    // pointer (a tooltip appearing under it, an element replaced), not the user
+    // moving to something new. Following it could also loop: reading the
+    // control's ID runs the testId hook, which may replace the element under
+    // the pointer and cause the next pointerover.
+    const last = this.lastOver;
+    this.lastOver = { x: event.clientX, y: event.clientY };
+    if (last && last.x === event.clientX && last.y === event.clientY) return;
     const current = this.pointer.current;
     // Moving between the parts of one control is still the same hover.
     if (current && (current.control === target || current.control.contains(target))) return;

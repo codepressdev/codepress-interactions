@@ -3,8 +3,17 @@ import { HoverEffects, hoveredSelectors, reactHoverHandler, type HoverHost } fro
 import type { HoverKind, HoverSettledData } from "../src/types";
 
 // jsdom has no PointerEvent: a MouseEvent with pointerType is what the listener reads.
-function pointer(type: "pointerover" | "pointerout" | "pointerdown", target: Element, pointerType = "mouse", relatedTarget: Element | null = null) {
-  const event = new MouseEvent(type, { bubbles: true, relatedTarget });
+// Each event is at a new position unless `at` is given: a pointerover where the
+// last one was is the page changing under a still pointer, and is ignored.
+let position = 0;
+function pointer(
+  type: "pointerover" | "pointerout" | "pointerdown",
+  target: Element,
+  pointerType = "mouse",
+  relatedTarget: Element | null = null,
+  at = ++position,
+) {
+  const event = new MouseEvent(type, { bubbles: true, relatedTarget, clientX: at, clientY: at });
   Object.defineProperty(event, "pointerType", { value: pointerType });
   target.dispatchEvent(event);
 }
@@ -166,6 +175,40 @@ describe("hover follow-through", () => {
     pointer("pointerover", document.getElementById("plain")!);
     await vi.advanceTimersByTimeAsync(1000);
     expect(silent).toEqual([]);
+  });
+
+  it("with a dwell longer than the settle time, an effect inside the dwell does not end the hover early", async () => {
+    document.body.innerHTML = '<button data-testid="info">Info</button>';
+    start({ dwellMs: 500, settleMs: 100 });
+    pointer("pointerover", document.querySelector("button")!);
+    await vi.advanceTimersByTimeAsync(50);
+    document.body.append(withRole("tooltip"));
+    // Well past settleMs after the effect, still inside the dwell: not settled, not dropped.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(emitted).toEqual([]);
+    expect(silent).toEqual([]);
+    // The dwell commits at 500 ms and the window settles settleMs later, with the early effect counted.
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ kind: "pointer", control_id: "info", dwell_ms: 500, overlay_opened: true, nodes_added: true });
+    expect(emitted[0].settle_ms).toBe(50);
+    expect(snapshots).toEqual(["hover"]);
+  });
+
+  it("a pointerover where the pointer already was is the page changing under it, not a new hover", async () => {
+    document.body.innerHTML = '<button data-testid="a">A</button><button data-testid="b">B</button>';
+    let ids = 0;
+    start({ controlId: (element) => (ids++, element.getAttribute("data-testid")!) });
+    const [a, b] = document.querySelectorAll("button");
+    pointer("pointerover", a, "mouse", null, 7);
+    expect(ids).toBe(1);
+    // B replaced the element under a still pointer: ignored, and A's hover goes on.
+    pointer("pointerover", b, "mouse", null, 7);
+    expect(ids).toBe(1);
+    document.body.append(withRole("tooltip"));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(emitted.map((e) => e.control_id)).toEqual(["a"]);
   });
 
   it("an element matching a :hover style rule is a control", async () => {

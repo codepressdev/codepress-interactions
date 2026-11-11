@@ -276,9 +276,9 @@ export interface PerfSummaryData {
   image_error_count: number | null;
   uncaught_error_count: number | null;
   unavailable: SignalName[];
-  /** Mouse or pen hovers that rested past the dwell and changed nothing observable (1.2.0). */
+  /** Mouse or pen hovers that rested past the dwell and changed nothing observable (1.2.0). Absent when zero. */
   hovers_silent?: number;
-  /** Keyboard focuses that changed nothing observable (1.2.0). */
+  /** Keyboard focuses that changed nothing observable (1.2.0). Absent when zero. */
   focus_silent?: number;
 }
 

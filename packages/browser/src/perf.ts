@@ -151,9 +151,10 @@ export class PerfSignals {
       image_error_count: a.image_error ? t.imageErrorCount : null,
       uncaught_error_count: a.uncaught_error ? t.uncaughtErrorCount : null,
       unavailable: (Object.keys(a) as SignalName[]).filter((name) => !a[name]),
-      hovers_silent: Math.min(1_000_000, t.hoversSilent),
-      focus_silent: Math.min(1_000_000, t.focusSilent),
     };
+    // Absent when zero, so a page with hovers off (or none silent) sends the same summary as before 1.2.0.
+    if (t.hoversSilent) summary.hovers_silent = Math.min(1_000_000, t.hoversSilent);
+    if (t.focusSilent) summary.focus_silent = Math.min(1_000_000, t.focusSilent);
     this.totals = emptyCounters();
     this.windowStart = at;
     return summary;

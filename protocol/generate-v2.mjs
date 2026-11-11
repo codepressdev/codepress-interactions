@@ -148,8 +148,8 @@ const PerfData = {
     image_error_count: nullable(count),
     uncaught_error_count: nullable(count),
     unavailable: { type: "array", uniqueItems: true, maxItems: 5, items: { type: "string", enum: SIGNALS } },
-    hovers_silent: { ...count, description: "Mouse or pen hovers in this window that rested past the dwell and changed nothing observable. Absent before 1.2.0." },
-    focus_silent: { ...count, description: "Keyboard focuses in this window that changed nothing observable. Absent before 1.2.0." },
+    hovers_silent: { ...count, description: "Mouse or pen hovers in this window that rested past the dwell and changed nothing observable. Absent when zero (always with hovers: false, and before 1.2.0)." },
+    focus_silent: { ...count, description: "Keyboard focuses in this window that changed nothing observable. Absent when zero (always with hovers: false, and before 1.2.0)." },
   }, ["window_ms", "layout_shift_score", "layout_shift_count", "long_task_count", "long_task_ms", "event_timing_count", "event_timing_max_ms", "image_error_count", "uncaught_error_count", "unavailable"]),
   description:
     "Performance signal totals since the previous summary. A signal the browser does not support is null and listed in unavailable, never reported as zero.",

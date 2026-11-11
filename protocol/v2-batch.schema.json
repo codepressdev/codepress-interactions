@@ -1611,13 +1611,13 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1000000,
-          "description": "Mouse or pen hovers in this window that rested past the dwell and changed nothing observable. Absent before 1.2.0."
+          "description": "Mouse or pen hovers in this window that rested past the dwell and changed nothing observable. Absent when zero (always with hovers: false, and before 1.2.0)."
         },
         "focus_silent": {
           "type": "integer",
           "minimum": 0,
           "maximum": 1000000,
-          "description": "Keyboard focuses in this window that changed nothing observable. Absent before 1.2.0."
+          "description": "Keyboard focuses in this window that changed nothing observable. Absent when zero (always with hovers: false, and before 1.2.0)."
         }
       },
       "description": "Performance signal totals since the previous summary. A signal the browser does not support is null and listed in unavailable, never reported as zero."

@@ -205,7 +205,7 @@ findings.map(formatFinding);
 
 ## Performance signals
 
-Layout shifts, event timing (40 ms and slower), long tasks, image load errors and uncaught errors/unhandled rejections are counted and sent as `perf.summary` events, with the hovers and keyboard focuses that changed nothing (`hovers_silent`, `focus_silent`, since 1.2.0). Each API is feature-detected: a signal the browser does not support is `null` and listed in `unavailable`, never reported as zero. Error messages, stacks, file names and image URLs are not read.
+Layout shifts, event timing (40 ms and slower), long tasks, image load errors and uncaught errors/unhandled rejections are counted and sent as `perf.summary` events, with the hovers and keyboard focuses that changed nothing (`hovers_silent`, `focus_silent`, since 1.2.0, absent when zero, so always absent with `hovers: false`). Each API is feature-detected: a signal the browser does not support is `null` and listed in `unavailable`, never reported as zero. Error messages, stacks, file names and image URLs are not read.
 
 ## Sinks
 
