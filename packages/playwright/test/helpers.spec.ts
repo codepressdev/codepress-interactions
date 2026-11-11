@@ -273,6 +273,95 @@ test("sweep: hover content on an element keyboard focus cannot reach is reported
   expect(finding.evidence).toMatchObject({ hover_overlay: true, focus_overlay: false, focus_reached: false });
 });
 
+test("sweep: a toast shown on a timer during a hover is not hover-only content of that control", async ({ page }) => {
+  // The toast is unrelated to the button: a fixed layer added to the body
+  // elsewhere on the page 50 ms after the pointer first reaches the button,
+  // and left showing.
+  await serve(
+    page,
+    `${TOOLTIP_CSS}
+<span class="tip-wrap"><button data-testid="help" class="both">Help</button><span class="tip">Opens the guide</span></span>
+<script>
+  document.addEventListener("pointerover", (event) => {
+    if (!event.target.closest?.("button") || document.getElementById("toast")) return;
+    setTimeout(() => {
+      const toast = document.createElement("div");
+      toast.id = "toast";
+      toast.setAttribute("role", "alert");
+      toast.style.cssText = "position:fixed;right:16px;bottom:16px;width:240px;padding:8px;background:#333;color:#fff";
+      toast.textContent = "Saved";
+      document.body.append(toast);
+    }, 50);
+  });
+</script>`,
+  );
+  const result = await sweepInteractions(page);
+  expect(await page.locator("#toast").isVisible()).toBe(true);
+  expect(result).toEqual({ findings: [], controls: 1, skipped: 0 });
+});
+
+test("sweep: a layer far from the control, not inside its parent or referenced by it, is not the control's", async ({ page }) => {
+  // A status line in the page corner, shown on every hover of the button.
+  await serve(
+    page,
+    `<div style="margin:40px"><button data-testid="save" id="save">Save</button></div>
+<script>
+  const button = document.getElementById("save");
+  button.addEventListener("mouseenter", () => {
+    const status = document.createElement("div");
+    status.id = "status";
+    status.style.cssText = "position:fixed;right:16px;bottom:16px;width:240px;background:#333;color:#fff";
+    status.textContent = "Ctrl+S saves";
+    document.body.append(status);
+  });
+  button.addEventListener("mouseleave", () => document.getElementById("status")?.remove());
+</script>`,
+  );
+  expect(await sweepInteractions(page)).toEqual({ findings: [], controls: 1, skipped: 0 });
+});
+
+test("sweep: a layer the control shows on its first hover only is not reported (the hover is repeated)", async ({ page }) => {
+  await serve(
+    page,
+    `<div style="position:relative;margin:40px"><button data-testid="hint" id="hint">New</button></div>
+<script>
+  const button = document.getElementById("hint");
+  let shown = false;
+  button.addEventListener("mouseenter", () => {
+    if (shown) return;
+    shown = true;
+    const tip = document.createElement("div");
+    tip.setAttribute("role", "tooltip");
+    tip.style.cssText = "position:absolute;left:0;top:30px;width:120px;background:#333;color:#fff";
+    tip.textContent = "Try this";
+    button.parentElement.append(tip);
+  });
+  button.addEventListener("mouseleave", () => button.parentElement.querySelector("[role=tooltip]")?.remove());
+</script>`,
+  );
+  expect(await sweepInteractions(page)).toEqual({ findings: [], controls: 1, skipped: 0 });
+});
+
+test("sweep: a tooltip portaled to the body and referenced by aria-describedby counts as the control's", async ({ page }) => {
+  await serve(
+    page,
+    `<div style="margin:200px 40px"><button data-testid="share" id="share" aria-describedby="share-tip">Share</button></div>
+<script>
+  const button = document.getElementById("share");
+  button.addEventListener("mouseenter", () => {
+    const tip = document.createElement("div");
+    tip.id = "share-tip";
+    tip.style.cssText = "position:absolute;left:600px;top:40px;width:120px;background:#333;color:#fff";
+    tip.textContent = "Copy a link";
+    document.body.append(tip);
+  });
+  button.addEventListener("mouseleave", () => document.getElementById("share-tip")?.remove());
+</script>`,
+  );
+  const { findings } = await sweepInteractions(page);
+  expect(findings.map((f) => [f.check, f.control_id])).toEqual([["a11y.hover_only_content", "share"]]);
+});
+
 test("sweep: a hover menu that spills out of its bar and off screen is found by the sweep, not at rest", async ({ page }) => {
   await serve(page, SPILLING_MENU);
   expect(await findIssues(page)).toEqual([]);

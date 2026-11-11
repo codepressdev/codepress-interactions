@@ -178,7 +178,7 @@ interface SweepStep {
 interface PageSweep {
   controls(max: number): { elements: Element[]; total: number };
   controlId(element: Element): string;
-  arm(): void;
+  arm(control: Element): void;
   hovered(control: Element): Promise<SweepStep>;
   focus(control: Element): Promise<SweepStep>;
   blur(control: Element): void;
@@ -232,6 +232,17 @@ export async function sweepInteractions(page: Page, options: SweepOptions = {}):
       const { x, y } = await sweep.evaluate((s) => s.away());
       await page.mouse.move(x, y);
     };
+    /** Rests the mouse on `control` from a quiet page away from it, and waits for the hover to settle. */
+    const hoverStep = async (control: ElementHandle<Element>): Promise<SweepStep> => {
+      await rest();
+      await control.scrollIntoViewIfNeeded({ timeout: 2000 });
+      await sweep.evaluate(async (s, element) => {
+        await s.quiet();
+        s.arm(element);
+      }, control);
+      await control.hover({ force: true, timeout: 2000 });
+      return sweep.evaluate((s, element) => s.hovered(element), control);
+    };
     for (const property of elements.values()) {
       const control = property.asElement() as ElementHandle<Element> | null;
       if (!control) continue;
@@ -240,14 +251,7 @@ export async function sweepInteractions(page: Page, options: SweepOptions = {}):
         let hovered: SweepStep | null = null;
         let hoverSnapshot: Snapshot | null = null;
         if (hover) {
-          await rest();
-          await control.scrollIntoViewIfNeeded({ timeout: 2000 });
-          await sweep.evaluate(async (s) => {
-            await s.quiet();
-            s.arm();
-          });
-          await control.hover({ force: true, timeout: 2000 });
-          hovered = await sweep.evaluate((s, element) => s.hovered(element), control);
+          hovered = await hoverStep(control);
           const result = await inspect(page, options);
           add(result.findings);
           hoverSnapshot = result.snapshot;
@@ -256,16 +260,25 @@ export async function sweepInteractions(page: Page, options: SweepOptions = {}):
         if (focus) {
           await rest();
           await page.keyboard.press("Escape");
-          await sweep.evaluate(async (s) => {
+          await sweep.evaluate(async (s, element) => {
             await s.quiet();
-            s.arm();
-          });
+            s.arm(element);
+          }, control);
           focused = await sweep.evaluate((s, element) => s.focus(element), control);
           add((await inspect(page, options)).findings);
           await page.keyboard.press("Escape");
           await sweep.evaluate((s, element) => s.blur(element), control);
         }
-        if (hovered?.reached && hovered.overlay && focused && !focused.overlay && hoverSnapshot) {
+        // Hover-only only when a second hover opens it again: a layer that appeared once (a
+        // first-visit hint, a timer) is not what this control shows.
+        if (
+          hovered?.reached &&
+          hovered.overlay &&
+          focused &&
+          !focused.overlay &&
+          hoverSnapshot &&
+          (await hoverStep(control)).overlay
+        ) {
           const { body, sha256 } = hoverSnapshot;
           add(
             hoverOnlyFindings(

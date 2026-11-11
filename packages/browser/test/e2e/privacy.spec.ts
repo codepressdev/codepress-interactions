@@ -357,10 +357,10 @@ test("a hover and focus sweep returns no tooltip text, class names, attribute va
     const out: unknown[] = [total];
     for (const element of elements) {
       out.push(sweep.controlId(element), sweep.away());
-      sweep.arm();
+      sweep.arm(element);
       element.dispatchEvent(new PointerEvent("pointerover", { pointerType: "mouse", bubbles: true, clientX: 50, clientY: 50 }));
       out.push(await sweep.hovered(element));
-      sweep.arm();
+      sweep.arm(element);
       out.push(await sweep.focus(element));
       sweep.blur(element);
     }

@@ -3,12 +3,12 @@
  * `sweepInteractions` in @codepress/interactions-playwright): lists the
  * controls to visit, and after the test runner hovers or focuses one, waits
  * for the page to settle with the SDK's hover follow-through (hover-effects.ts)
- * and reports whether an overlay opened.
+ * and reports whether an overlay tied to that control opened.
  *
  * Only booleans, counts and control identifiers leave this module. Whether an
  * overlay has text is read in the page and never sent.
  */
-import { isOverlay } from "./follow";
+import { OVERLAYS, isOverlay } from "./follow";
 import { HoverEffects } from "./hover-effects";
 import { INTERACTIVE } from "./snapshot";
 import { controlIdOf, type TestIdFilter } from "./util";
@@ -20,8 +20,15 @@ const WINDOW_CAP_MS = 5500;
 /** Longest wait for the page to go quiet, and for finite transitions and animations to finish. */
 const QUIET_CAP_MS = 5000;
 const ANIMATION_CAP_MS = 2000;
-/** Elements visited when looking for overlays. */
-const MAX_SCAN = 20000;
+/** A layer this close to the control (px, between the boxes) counts as anchored to it. */
+const NEAR_PX = 16;
+/** Elements visited per overlay scan, and added elements remembered per step. */
+const MAX_CANDIDATES = 2000;
+const MAX_ADDED = 64;
+/** IDs followed per ARIA reference attribute. */
+const MAX_REFERENCES = 8;
+const REFERENCES = ["aria-describedby", "aria-controls", "aria-owns"];
+const OVERLAY_QUERY = `${OVERLAYS},[popover]`;
 
 export interface SweepSetup {
   /** CSS selector of the subtree to sweep. Default: the document element. */
@@ -37,7 +44,13 @@ export interface SweepSetup {
 export interface SweepStep {
   /** The control got it: the mouse rested on it, or keyboard focus reached it. */
   reached: boolean;
-  /** An overlay opened: a dialog, tooltip, menu, listbox or open popover, or a newly shown positioned layer with text or a control. */
+  /**
+   * An overlay tied to the control opened: a dialog, tooltip, menu, listbox or
+   * open popover, or a newly shown positioned layer with text or a control,
+   * that is inside the control or its parent, is referenced by the control's
+   * `aria-describedby`, `aria-controls` or `aria-owns`, or sits within 16 px
+   * of it. A toast or banner elsewhere does not count.
+   */
   overlay: boolean;
   /** The follow-through window ended on its own (settled, or timed out at 5 s), rather than the sweep's cap. */
   settled: boolean;
@@ -53,8 +66,11 @@ export class Sweep {
   private settleMs: number;
   /** The control the follow-through opened its window on since `arm`. */
   private opened: Element | null = null;
-  private waiting: { kind: Kind; resolve: (overlay: boolean) => void } | null = null;
+  private waiting: { kind: Kind; resolve: () => void } | null = null;
   private baseline = new Set<Element>();
+  /** Elements added under the root since `arm` (portaled overlays are found this way). */
+  private added: Element[] = [];
+  private observer: MutationObserver | null = null;
 
   constructor(setup: SweepSetup) {
     const root = setup.root ? document.querySelector(setup.root) : document.documentElement;
@@ -76,8 +92,8 @@ export class Sweep {
       },
       routeTemplate: () => null,
       snapshot: () => Promise.resolve(null),
-      emit: (data) => this.report(data.kind, data.overlay_opened),
-      silent: (kind) => this.report(kind, false),
+      emit: (data) => this.report(data.kind),
+      silent: (kind) => this.report(kind),
       noFocusIndicator: () => {},
     });
     this.hovers.start();
@@ -103,19 +119,27 @@ export class Sweep {
     return controlIdOf(element, this.root, this.testId);
   }
 
-  /** Records what is showing now, before a hover or focus. */
-  arm(): void {
+  /** Records the overlays tied to `control` that show now, before it is hovered or focused, and starts noting added elements. */
+  arm(control: Element): void {
     this.opened = null;
-    this.baseline = this.overlays();
+    this.added = [];
+    this.observer?.disconnect();
+    this.observer = new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes)
+          if (node instanceof Element && this.added.length < MAX_ADDED) this.added.push(node);
+    });
+    this.observer.observe(this.root, { subtree: true, childList: true });
+    this.baseline = this.overlays(control);
   }
 
   /** After the mouse moved onto `control`: waits for the hover to settle. */
   async hovered(control: Element): Promise<SweepStep> {
     const window = this.opened;
     const own = !!window && related(window, control);
-    const { overlay, settled } = await this.follow("pointer", window !== null);
+    const { settled } = await this.follow("pointer", window !== null);
     const reached = own || safeMatches(control, ":hover");
-    return { reached, overlay: reached && (overlay || this.appeared(control)), settled };
+    return { reached, overlay: reached && this.appeared(control), settled };
   }
 
   /** Gives `control` keyboard focus and waits for it to settle. */
@@ -127,9 +151,12 @@ export class Sweep {
     }
     const active = document.activeElement;
     const reached = !!active && (active === control || control.contains(active));
-    if (!reached) return { reached, overlay: false, settled: true };
-    const { overlay, settled } = await this.follow("focus", this.opened !== null);
-    return { reached, overlay: overlay || this.appeared(control), settled };
+    if (!reached) {
+      this.disarm();
+      return { reached, overlay: false, settled: true };
+    }
+    const { settled } = await this.follow("focus", this.opened !== null);
+    return { reached, overlay: this.appeared(control), settled };
   }
 
   /** Ends keyboard focus on `control`, if it has it. */
@@ -175,8 +202,9 @@ export class Sweep {
   }
 
   stop(): void {
+    this.disarm();
     this.hovers.stop();
-    this.waiting?.resolve(false);
+    this.waiting?.resolve();
     this.waiting = null;
   }
 
@@ -189,54 +217,106 @@ export class Sweep {
     return rect.width > 0 && rect.height > 0 && visible(element);
   }
 
-  private report(kind: Kind, overlay: boolean): void {
+  private disarm(): void {
+    this.observer?.disconnect();
+    this.observer = null;
+  }
+
+  private report(kind: Kind): void {
     if (this.waiting?.kind !== kind) return;
-    this.waiting.resolve(overlay);
+    this.waiting.resolve();
     this.waiting = null;
   }
 
-  /** Waits for the follow-through window of `kind` to report; without one, for the page to go quiet. */
-  private async follow(kind: Kind, opened: boolean): Promise<{ overlay: boolean; settled: boolean }> {
+  /**
+   * Waits for the follow-through window of `kind` to report (settled, or its
+   * 5 s timeout); without one, for the page to go quiet. Then for finite
+   * transitions. False when the sweep's own cap ended the wait.
+   */
+  private async follow(kind: Kind, opened: boolean): Promise<{ settled: boolean }> {
     if (!opened) {
       await this.quiet();
-      return { overlay: false, settled: true };
+      return { settled: true };
     }
     let settled = true;
-    const overlay = await new Promise<boolean>((resolve) => {
+    await new Promise<void>((resolve) => {
       const cap = setTimeout(() => {
         settled = false;
         this.waiting = null;
-        resolve(false);
+        resolve();
       }, DWELL_MS + this.settleMs + WINDOW_CAP_MS);
       this.waiting = {
         kind,
-        resolve: (value) => {
+        resolve: () => {
           clearTimeout(cap);
-          resolve(value);
+          resolve();
         },
       };
     });
     await animationsDone();
-    return { overlay, settled };
+    return { settled };
   }
 
-  /** Shown overlays: the follow-through's overlays, plus absolutely or fixed positioned layers with text or a control. */
-  private overlays(): Set<Element> {
+  /**
+   * Shown overlays tied to `control`. Only candidates are inspected, never the
+   * whole page: the subtree of the control's parent, what the control's ARIA
+   * references point to, overlays by role or popover, and what was added
+   * since `arm`.
+   */
+  private overlays(control: Element): Set<Element> {
     const out = new Set<Element>();
-    const all = this.root.getElementsByTagName("*");
-    for (let i = 0; i < all.length && i < MAX_SCAN; i++) {
-      const element = all[i];
-      if (overlayLike(element)) out.add(element);
+    const parent = control.parentElement;
+    const owner =
+      parent && parent !== document.body && parent !== document.documentElement && this.root.contains(parent) && parent !== this.root
+        ? parent
+        : control;
+    const referenced: Element[] = [];
+    for (const name of REFERENCES)
+      for (const id of (control.getAttribute(name) ?? "").split(/\s+/).filter(Boolean).slice(0, MAX_REFERENCES)) {
+        const element = document.getElementById(id);
+        if (element) referenced.push(element);
+      }
+    const box = control.getBoundingClientRect();
+    const tied = (element: Element) =>
+      owner.contains(element) ||
+      referenced.some((reference) => reference.contains(element) || element.contains(reference)) ||
+      near(element.getBoundingClientRect(), box);
+    let budget = MAX_CANDIDATES;
+    const visit = (element: Element) => {
+      if (budget-- <= 0 || out.has(element) || element === control || element.contains(control)) return;
+      if (overlayLike(element) && tied(element)) out.add(element);
+    };
+    const subtree = (top: Element) => {
+      visit(top);
+      const all = top.getElementsByTagName("*");
+      for (let i = 0; i < all.length && budget > 0; i++) visit(all[i]);
+    };
+    subtree(owner);
+    for (const element of referenced) subtree(element);
+    try {
+      const overlays = this.root.querySelectorAll(OVERLAY_QUERY);
+      for (let i = 0; i < overlays.length && budget > 0; i++) visit(overlays[i]);
+    } catch {
+      /* Selector unsupported. */
     }
+    for (const element of this.added) if (element.isConnected) subtree(element);
     return out;
   }
 
-  /** An overlay is showing that was not before `arm`, other than the control and what contains it. */
+  /** An overlay tied to the control shows that did not before `arm`. Ends noting added elements. */
   private appeared(control: Element): boolean {
-    for (const element of this.overlays())
-      if (!this.baseline.has(element) && element !== control && !element.contains(control)) return true;
+    const now = this.overlays(control);
+    this.disarm();
+    for (const element of now) if (!this.baseline.has(element)) return true;
     return false;
   }
+}
+
+/** The boxes are at most `NEAR_PX` apart (or overlap). */
+function near(a: DOMRect, b: DOMRect): boolean {
+  const dx = Math.max(0, b.left - a.right, a.left - b.right);
+  const dy = Math.max(0, b.top - a.bottom, a.top - b.bottom);
+  return dx <= NEAR_PX && dy <= NEAR_PX;
 }
 
 function related(a: Element, b: Element): boolean {

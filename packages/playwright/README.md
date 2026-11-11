@@ -72,7 +72,9 @@ It runs the checks on the page at rest, then for each visible, enabled control i
 3. moves the mouse away, presses Escape, waits for quiet, gives the control keyboard focus (`:focus-visible`), waits for it to settle and runs the checks;
 4. presses Escape and blurs the control, to close what it opened.
 
-Each finding is kept once per fingerprint, so a problem seen at rest and in every state is one line. When the hover opened an overlay and the keyboard focus did not, it adds an `a11y.hover_only_content` finding for that control (WCAG 1.4.13 and 2.1.1): keyboard users never see that content. An overlay is a dialog, tooltip, menu, listbox or open popover, or an absolutely or fixed positioned layer with text or a control that was not showing before. Show the content on `:focus-visible` (or `:focus-within` on a wrapper) as well as `:hover` to fix it.
+Each finding is kept once per fingerprint, so a problem seen at rest and in every state is one line. When the hover opened an overlay and the keyboard focus did not, the sweep hovers the control once more, and if the overlay opens again it adds an `a11y.hover_only_content` finding for that control (WCAG 1.4.13 and 2.1.1): keyboard users never see that content. Show the content on `:focus-visible` (or `:focus-within` on a wrapper) as well as `:hover` to fix it.
+
+An overlay is a dialog, tooltip, menu, listbox or open popover, or an absolutely or fixed positioned layer with text or a control, that was not showing before and is tied to the control: inside the control or its parent element, referenced by the control's `aria-describedby`, `aria-controls` or `aria-owns`, or within 16 px of it. A toast, banner or status line elsewhere on the page that appears during a hover is not counted, and one that appears only once is ruled out by the second hover.
 
 Escape between controls closes dialogs and menus, including one the test opened before the sweep, so sweep a screen in its resting state; `root` limits the sweep to part of it. The sweep only hovers and focuses: it never clicks or types.
 
