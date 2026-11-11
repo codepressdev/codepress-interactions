@@ -245,6 +245,27 @@ test("allow-overlap: * on a fixed header, a marker on the covered side, and a na
   expect(marked.body.allow_overlap.element).toHaveLength(3);
 });
 
+test("allow-overlap: names resolve for boxes too large to bucket, as marker or as partner", async ({ page }) => {
+  // Each backdrop spans more than 64 cells of the 256 px grid the walk matches names on.
+  const html = (attr: string) =>
+    `<div style="position:relative;height:3200px">
+       <div data-testid="backdrop" ${attr}="chip" style="position:absolute;left:0;top:0;width:1200px;height:3000px;background:#eee"></div>
+       <span data-testid="chip" style="position:absolute;left:1180px;top:2000px;width:40px;height:20px;background:#09f"></span>
+       <div data-testid="poster" style="position:absolute;left:0;top:0;width:1200px;height:3000px"></div>
+       <span data-testid="sticker" ${attr}="poster" style="position:absolute;left:600px;top:2900px;width:40px;height:20px;background:red"></span>
+     </div>`;
+  const unmarked = await scan(page, html("data-other"));
+  expectSame(unmarked);
+  const pairs = overlapsOf(unmarked.node);
+  expect(pairs).toContainEqual(["backdrop", "chip"]);
+  expect(pairs).toContainEqual(["poster", "sticker"]);
+  const marked = await scan(await page.context().newPage(), html("data-layout-allow-overlap"));
+  expectSame(marked);
+  const left = overlapsOf(marked.node);
+  expect(left).not.toContainEqual(["backdrop", "chip"]);
+  expect(left).not.toContainEqual(["poster", "sticker"]);
+});
+
 // ---- Layout negatives -----------------------------------------------------------
 
 test("no overlap or spill: tooltip, dialog, ignored badge, scroller content, sticky header", async ({ page }) => {

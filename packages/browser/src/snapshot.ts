@@ -642,14 +642,24 @@ function resolveAllowed(
   const result: NonNullable<SnapshotBody["allow_overlap"]> = { element: [], other: [] };
   const wanted = new Set<string>();
   for (const { names } of marked) for (const name of names) if (name !== "*") wanted.add(name);
-  const rowsOf = new Map<string, number[]>();
+  // Elements bearing each wanted name, bucketed by grid cell so a marker is only
+  // compared with the elements near it (a list of 1,000 badges naming 1,000
+  // "avatar"s is not a million comparisons).
+  const byName = new Map<string, PlaceIndex>();
   if (wanted.size)
     for (const [element, row] of indexOf)
       for (const name of new Set([element.getAttribute("data-interaction-id"), element.getAttribute("data-testid")])) {
         if (!name || !wanted.has(name)) continue;
-        const rows = rowsOf.get(name);
-        if (rows) rows.push(row);
-        else rowsOf.set(name, [row]);
+        let index = byName.get(name);
+        if (!index) byName.set(name, (index = { cells: new Map(), wide: [], all: [] }));
+        index.all.push(row);
+        const span = cellsOf(elements, row);
+        if (!span) index.wide.push(row);
+        else for (const key of span) {
+          const list = index.cells.get(key);
+          if (list) list.push(row);
+          else index.cells.set(key, [row]);
+        }
       }
   const crosses = (a: number, b: number) =>
     Math.min(elements.x[a] + elements.width[a], elements.x[b] + elements.width[b]) > Math.max(elements.x[a], elements.x[b]) &&
@@ -661,8 +671,20 @@ function resolveAllowed(
       result.other.push(-1);
       continue;
     }
+    const span = cellsOf(elements, row);
     const partners = new Set<number>();
-    for (const name of names) for (const other of rowsOf.get(name) ?? []) if (other !== row && crosses(row, other)) partners.add(other);
+    const consider = (other: number) => {
+      if (other !== row && crosses(row, other)) partners.add(other);
+    };
+    for (const name of names) {
+      const index = byName.get(name);
+      if (!index) continue;
+      if (!span) index.all.forEach(consider);
+      else {
+        index.wide.forEach(consider);
+        for (const key of span) index.cells.get(key)?.forEach(consider);
+      }
+    }
     for (const other of [...partners].sort((a, b) => a - b)) {
       if (result.element.length >= MAX_ALLOWED_PAIRS) break;
       result.element.push(row);
@@ -670,6 +692,31 @@ function resolveAllowed(
     }
   }
   return result;
+}
+
+interface PlaceIndex {
+  /** Rows by grid cell. */
+  cells: Map<string, number[]>;
+  /** Rows spanning too many cells to bucket: compared with every marker. */
+  wide: number[];
+  all: number[];
+}
+
+/** Side of a grid cell, in CSS pixels. */
+const CELL_PX = 256;
+/** A box spanning more cells than this is not bucketed. */
+const MAX_CELLS = 64;
+
+/** Grid cells a row's box touches, or null when it spans too many to list. */
+function cellsOf(elements: SnapshotBody["elements"], row: number): string[] | null {
+  const x0 = Math.floor(elements.x[row] / CELL_PX);
+  const y0 = Math.floor(elements.y[row] / CELL_PX);
+  const x1 = Math.floor((elements.x[row] + elements.width[row]) / CELL_PX);
+  const y1 = Math.floor((elements.y[row] + elements.height[row]) / CELL_PX);
+  if (!(x1 >= x0 && y1 >= y0) || (x1 - x0 + 1) * (y1 - y0 + 1) > MAX_CELLS) return null;
+  const keys: string[] = [];
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) keys.push(`${x},${y}`);
+  return keys;
 }
 
 /**
