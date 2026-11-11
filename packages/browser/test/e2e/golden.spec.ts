@@ -35,6 +35,16 @@ test("regenerate golden fixtures", async ({ page }) => {
          await fetch("/api/cart", { method: "POST" });
          document.querySelector("h1").textContent = "Saved";
        });
+       const pay = document.querySelector('[data-testid="checkout-pay"]');
+       pay.addEventListener("mouseenter", () => {
+         const tip = document.createElement("div");
+         tip.id = "tip";
+         tip.setAttribute("role", "tooltip");
+         tip.style.cssText = "position:absolute;left:16px;top:52px;width:180px;height:24px;background:#333;color:#fff";
+         tip.textContent = "Pays with your saved card";
+         document.body.append(tip);
+       });
+       pay.addEventListener("mouseleave", () => document.getElementById("tip")?.remove());
      </script>`,
     {
       api: (route) =>
@@ -59,6 +69,12 @@ test("regenerate golden fixtures", async ({ page }) => {
   await expect.poll(async () => events(await output(page)).some((e) => e.type === "ui.finding")).toBe(true);
   await page.click("#save");
   await expect.poll(async () => events(await output(page)).some((e) => e.type === "ui.click.settled")).toBe(true);
+  // A resting pointer opens the tooltip: ui.hover.settled with a hover snapshot.
+  await page.mouse.move(790, 590);
+  await page.waitForTimeout(100);
+  // The pay button's left part, clear of the promo banner over its right half.
+  await page.mouse.move(40, 24);
+  await expect.poll(async () => events(await output(page)).some((e) => e.type === "ui.hover.settled")).toBe(true);
   const out = await output(page);
   const golden = out.snapshots[0];
   const body = golden.body;
@@ -72,10 +88,13 @@ test("regenerate golden fixtures", async ({ page }) => {
     if (!ids.has(value)) ids.set(value, uuid(100 + ids.size));
     return ids.get(value)!;
   };
+  const hover = events(out).find((e) => e.type === "ui.hover.settled");
+  expect(hover.data).toMatchObject({ kind: "pointer", control_id: "checkout-pay", overlay_opened: true });
+  expect(events(out).find((e) => e.type === "ui.snapshot" && e.data.sha256 === hover.data.snapshot_sha256)?.data.trigger).toBe("hover");
   const picked = events(out).filter(
     (e) =>
-      ["interaction.started", "request.started", "request.completed", "ui.click.settled", "perf.summary"].includes(e.type) ||
-      (e.type === "ui.snapshot" && e.data.sha256 === golden.sha256),
+      ["interaction.started", "request.started", "request.completed", "ui.click.settled", "ui.hover.settled", "perf.summary"].includes(e.type) ||
+      (e.type === "ui.snapshot" && (e.data.sha256 === golden.sha256 || e.data.sha256 === hover.data.snapshot_sha256)),
   );
   // A real finding from the SDK's own checks: the banner over the pay button.
   const finding = events(out).find(

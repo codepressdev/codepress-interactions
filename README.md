@@ -67,7 +67,7 @@ A finding has the check (`layout.overlap`, `layout.spill`, `layout.clipped_text`
 
 Measured with `pnpm --filter @codepress/interactions-browser bench` ([script](packages/browser/scripts/overhead.mjs)) in headless Chromium at 1280×720 on an Apple M1 Max, median of 5 runs, without throttling and with 4× CPU throttling (closer to a mid-range phone). Your numbers will differ; the script prints its machine with them.
 
-- **Bundle:** 24.0 KB gzip (67.1 KB minified) for the main entry, checks included. The checks alone (`/detect`) are 9.8 KB gzip.
+- **Bundle:** 28.7 KB gzip (81.5 KB minified) for the main entry, checks included. The checks alone (`/detect`) are 10.3 KB gzip.
 - **Idle page:** about 0.6 ms of extra main-thread time per 5 seconds, no long tasks, one flush timer and one structural MutationObserver.
 - **Clicks:** the SDK's click listener adds 0.09 ms (0.47 ms at 4×, p95 1.1 ms) before your handler runs.
 - **Snapshots:** the walk runs in idle-time slices of about 6–8 ms (`maxSliceMs`) and never caused a long task:

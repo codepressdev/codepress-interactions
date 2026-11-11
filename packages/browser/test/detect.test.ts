@@ -11,6 +11,7 @@ import {
   formatFinding,
   sha256HexSync,
   findingTier,
+  focusIndicatorFindings,
   involvesControl,
   sortFindings,
   toFindingData,
@@ -763,5 +764,47 @@ describe("wire data", () => {
     const outer = { check: "layout.overlap", control_id: null, evidence: { subject_interactive: false, other_interactive: false, subject_blocked_controls: 1 } };
     expect(involvesControl(outer)).toBe(true);
     expect(involvesControl({ ...outer, evidence: { ...outer.evidence, subject_blocked_controls: 0 } })).toBe(false);
+  });
+});
+
+describe("a11y.no_focus_indicator", () => {
+  const observation = {
+    control_id: "save",
+    route_template: "/settings",
+    viewport_width: 1280,
+    viewport_height: 800,
+    snapshot_sha256: null,
+    indicator_changed: false,
+    wrappers: 2,
+  };
+
+  it("a focus that changed nothing visible is one finding keyed by the control", () => {
+    const [finding, ...rest] = focusIndicatorFindings(observation);
+    expect(rest).toEqual([]);
+    expect(finding).toMatchObject({
+      type: "no_focus_indicator",
+      check: "a11y.no_focus_indicator",
+      control_id: "save",
+      subject: null,
+      other: null,
+      interaction_id: null,
+      route_template: "/settings",
+      viewport_width: 1280,
+      evidence: { kind_focus: true, indicator_changed: false, wrappers_compared: 2, structural_id: false },
+    });
+    expect(finding.fingerprint).toBe(fingerprint("no_focus_indicator", "/settings", "1024-1439", ["save"]));
+    expect(involvesControl(finding)).toBe(true);
+    expect(formatFinding(finding)).toContain("a11y.no_focus_indicator save on /settings");
+  });
+
+  it("nothing when the indicator changed, the check is off, or there is no control", () => {
+    expect(focusIndicatorFindings({ ...observation, indicator_changed: true })).toEqual([]);
+    expect(focusIndicatorFindings(observation, { checks: ["overlap"] })).toEqual([]);
+    expect(focusIndicatorFindings({ ...observation, control_id: "" })).toEqual([]);
+  });
+
+  it("a tag-path control is marked structural", () => {
+    const [finding] = focusIndicatorFindings({ ...observation, control_id: "main/form/button" });
+    expect(finding.evidence.structural_id).toBe(true);
   });
 });

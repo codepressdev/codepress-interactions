@@ -191,7 +191,7 @@ describe("contract", () => {
     expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
     expect(validateSnapshot(body), JSON.stringify(validateSnapshot.errors)).toBe(true);
     const types = batch.events.map((e: any) => e.type);
-    for (const type of ["ui.snapshot", "ui.click.settled", "ui.finding", "perf.summary", "interaction.started"])
+    for (const type of ["ui.snapshot", "ui.click.settled", "ui.hover.settled", "ui.finding", "perf.summary", "interaction.started"])
       expect(types).toContain(type);
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(body)));
     const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
@@ -203,5 +203,26 @@ describe("contract", () => {
     const finding = structuredClone(batch);
     finding.events.find((e: any) => e.type === "ui.finding").data.evidence.verdict = "looks broken";
     expect(validateBatch(finding)).toBe(false);
+  });
+
+  it("ui.hover.settled, the hover and focus snapshot triggers and the silent counters validate; 1.1.0 summaries still do", () => {
+    const batch = JSON.parse(readFileSync(resolve(protocol, "v2-batch.json"), "utf8"));
+    const hover = batch.events.find((e: any) => e.type === "ui.hover.settled");
+    const snapshot = batch.events.find((e: any) => e.type === "ui.snapshot");
+    const perf = batch.events.find((e: any) => e.type === "perf.summary");
+    const one = (event: any) => ({ ...batch, events: [event] });
+    const focus = { ...hover, data: { ...hover.data, kind: "focus", dwell_ms: 0, snapshot_sha256: null, has_hover_handler: true } };
+    expect(validateBatch(one(focus)), JSON.stringify(validateBatch.errors)).toBe(true);
+    for (const trigger of ["hover", "focus"])
+      expect(validateBatch(one({ ...snapshot, data: { ...snapshot.data, trigger } }))).toBe(true);
+    expect(validateBatch(one({ ...perf, data: { ...perf.data, hovers_silent: 3, focus_silent: 1 } }))).toBe(true);
+    const { hovers_silent: _h, focus_silent: _f, ...older } = perf.data;
+    expect(validateBatch(one({ ...perf, data: older }))).toBe(true);
+    // Strict: touch is not a kind, every effect is required, attribution is unknown.
+    expect(validateBatch(one({ ...hover, data: { ...hover.data, kind: "touch" } }))).toBe(false);
+    const { overlay_opened: _o, ...missing } = hover.data;
+    expect(validateBatch(one({ ...hover, data: missing }))).toBe(false);
+    expect(validateBatch(one({ ...hover, attribution: "explicit" }))).toBe(false);
+    expect(validateBatch(one({ ...hover, data: { ...hover.data, tooltip_text: "x" } }))).toBe(false);
   });
 });

@@ -59,12 +59,12 @@ const LegacyData = {
   description:
     "v1 event data, unchanged except: sdk_version moved to the batch, request_label (a bounded label returned by the host's requestLabel callback) was added, and target_key was added in 0.3.0.",
 };
-const TRIGGERS = ["route", "click", "resize", "visible", "manual"];
+const TRIGGERS = ["route", "click", "resize", "visible", "manual", "hover", "focus"];
 const THEMES = ["light", "dark", "unknown"];
 const SnapshotData = {
   ...strict({
     sha256: { type: "string", pattern: SHA, description: "SHA-256 of the uncompressed snapshot body bytes; the body is stored at /v2/snapshots/{sha256}." },
-    trigger: { type: "string", enum: TRIGGERS },
+    trigger: { type: "string", enum: TRIGGERS, description: "What took the snapshot. hover and focus (added in 1.2.0): an overlay opened after a resting pointer or keyboard focus (see ui.hover.settled)." },
     route_template: nullable(str(256, ROUTE)),
     viewport_width: int(0, 100000),
     viewport_height: int(0, 100000),
@@ -115,6 +115,27 @@ const ClickData = {
   description:
     "What followed a click until the page was quiet for clickSettleMs with no observed request in flight. Always attribution \"inferred\"; interaction_id is the click's interaction.started id. Requests in the window are counted here and never marked explicit.",
 };
+const bool = (description) => ({ type: "boolean", description });
+const HoverData = {
+  ...strict({
+    kind: { type: "string", enum: ["pointer", "focus"], description: "pointer: a mouse or pen pointer (never touch) rested on the control for at least hoverDwellMs. focus: keyboard focus (:focus-visible) reached it." },
+    control_id: { ...str(128), description: "The hovered or focused control, identified as a click's control_id is (test ID, else a tag path)." },
+    route_template: nullable(str(256, ROUTE)),
+    dwell_ms: { ...ms, description: "How long the pointer rested before the hover counted; 0 for focus." },
+    settle_ms: { ...ms, description: "Time from the pointer arriving (or focus) to the last observed effect." },
+    transition_started: bool("A CSS transition ran on the control, an ancestor, or inside what appeared."),
+    animation_started: bool("A CSS animation started on the control, an ancestor, or inside what appeared."),
+    nodes_added: bool("Elements were added anywhere in the observed root."),
+    overlay_opened: bool("A dialog, tooltip, menu, listbox or popover appeared (added, or shown by an attribute, class or style change, or a popover toggle)."),
+    expanded_changed: bool("An aria-expanded attribute changed."),
+    class_changed: bool("A class attribute changed on the control, an ancestor, or inside what appeared."),
+    style_changed: bool("An inline style changed on the control, an ancestor, or inside what appeared."),
+    snapshot_sha256: { ...nullable({ type: "string", pattern: SHA }), description: "The snapshot taken after settling because an overlay opened (trigger hover or focus); null when none was taken." },
+    has_hover_handler: { anyOf: [{ type: "boolean" }, { type: "null" }], description: "A React onMouseEnter, onMouseOver, onPointerEnter or onPointerOver handler on the control or up to 3 ancestors; false when they are React elements without one; null when none is a React element." },
+  }),
+  description:
+    "Added in 1.2.0. What followed a resting mouse or pen pointer or a keyboard focus until the page was quiet for hoverSettleMs. Sent only when at least one effect boolean is true; hovers and focuses that changed nothing are counted in perf.summary (hovers_silent, focus_silent). At most one per kind, control and route every hoverRecordIntervalMs (default 30 s) and maxHoverRecordsPerMinute (default 30) per page. Always attribution \"unknown\" with a null interaction_id.",
+};
 const PerfData = {
   ...strict({
     window_ms: ms,
@@ -127,7 +148,9 @@ const PerfData = {
     image_error_count: nullable(count),
     uncaught_error_count: nullable(count),
     unavailable: { type: "array", uniqueItems: true, maxItems: 5, items: { type: "string", enum: SIGNALS } },
-  }),
+    hovers_silent: { ...count, description: "Mouse or pen hovers in this window that rested past the dwell and changed nothing observable. Absent before 1.2.0." },
+    focus_silent: { ...count, description: "Keyboard focuses in this window that changed nothing observable. Absent before 1.2.0." },
+  }, ["window_ms", "layout_shift_score", "layout_shift_count", "long_task_count", "long_task_ms", "event_timing_count", "event_timing_max_ms", "image_error_count", "uncaught_error_count", "unavailable"]),
   description:
     "Performance signal totals since the previous summary. A signal the browser does not support is null and listed in unavailable, never reported as zero.",
 };
@@ -151,7 +174,7 @@ const ElementRef = strict(
 const FindingData = {
   ...strict(
     {
-      check: { ...str(64, "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$"), description: "Check identifier: layout.overlap, layout.spill, layout.page_h_scroll, layout.offscreen_control, layout.small_tap_target, layout.clipped_text, click.dead_click, click.rage_click, click.slow_feedback, click.silent_failure, click.error_after_click, stability.stuck_busy, stability.layout_shift, stability.slow_input or stability.broken_image." },
+      check: { ...str(64, "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$"), description: "Check identifier: layout.overlap, layout.spill, layout.page_h_scroll, layout.offscreen_control, layout.small_tap_target, layout.clipped_text, click.dead_click, click.rage_click, click.slow_feedback, click.silent_failure, click.error_after_click, stability.stuck_busy, stability.layout_shift, stability.slow_input, stability.broken_image or a11y.no_focus_indicator (added in 1.2.0: keyboard focus reached control_id and its outline, box shadow, border colours and background colour, and those of two ancestors, were the same focused and unfocused; evidence kind_focus is true)." },
       check_version: int(1, 1000),
       fingerprint: { type: "string", pattern: "^[0-9a-f]{16,64}$", description: "Stable grouping key: SHA-256 (first 32 hex) of check, route_template, viewport width band and the elements' stable_id (or control_id); never coordinates, scroll offsets or text." },
       route_template: nullable(str(256, ROUTE)),
@@ -218,6 +241,7 @@ const batch = {
         { $ref: "#/$defs/LegacyEvent" },
         { $ref: "#/$defs/SnapshotEvent" },
         { $ref: "#/$defs/ClickSettledEvent" },
+        { $ref: "#/$defs/HoverSettledEvent" },
         { $ref: "#/$defs/FindingEvent" },
         { $ref: "#/$defs/PerfSummaryEvent" },
       ],
@@ -225,11 +249,13 @@ const batch = {
     LegacyEvent: envelope({ type: "string", enum: legacyTypes }, "#/$defs/LegacyData", anyAttribution),
     SnapshotEvent: envelope({ const: "ui.snapshot" }, "#/$defs/SnapshotData", { const: "unknown" }),
     ClickSettledEvent: envelope({ const: "ui.click.settled" }, "#/$defs/ClickSettledData", { const: "inferred" }),
+    HoverSettledEvent: envelope({ const: "ui.hover.settled" }, "#/$defs/HoverSettledData", { const: "unknown" }),
     FindingEvent: envelope({ const: "ui.finding" }, "#/$defs/FindingData", { type: "string", enum: ["inferred", "unknown"] }),
     PerfSummaryEvent: envelope({ const: "perf.summary" }, "#/$defs/PerfSummaryData", { const: "unknown" }),
     LegacyData,
     SnapshotData,
     ClickSettledData: ClickData,
+    HoverSettledData: HoverData,
     FindingData,
     PerfSummaryData: PerfData,
     ElementRef,

@@ -1,8 +1,9 @@
 import { ClickEffects } from "./click-effects";
-import { checkEvents, checkSnapshot } from "./detect/index";
+import { checkEvents, checkSnapshot, focusIndicatorFindings } from "./detect/index";
 import type { TimelineEvent } from "./detect/timeline";
 import { toFindingData, type Finding } from "./detect/types";
 import type { SnapshotBody } from "./format";
+import { HoverEffects } from "./hover-effects";
 import { PerfSignals } from "./perf";
 import {
   callSink,
@@ -25,6 +26,7 @@ import type {
   Diagnostics,
   EventType,
   EvidenceEvent,
+  HoverSettledData,
   InteractionHandle,
   InteractionOptions,
   LegacyData,
@@ -132,6 +134,7 @@ export class Runtime {
   private timeoutMs: number;
   private perf = new PerfSignals();
   private clicks?: ClickEffects;
+  private hovers?: HoverEffects;
   private triggers?: SnapshotTriggers;
   private reportedSignals = false;
   // Snapshots
@@ -247,6 +250,7 @@ export class Runtime {
             "xhr",
             ...(this.snapshotsEnabled ? ["snapshot"] : []),
             "click_effects",
+            ...(this.hovers ? ["hover_effects"] : []),
             "performance",
           ]
         : [],
@@ -349,6 +353,46 @@ export class Runtime {
     });
     this.clicks.start();
     this.removals.push(() => this.clicks?.stop());
+    if (this.options.hovers !== false) {
+      this.hovers = new HoverEffects({
+        root: this.root,
+        dwellMs: numberOption(this.options.hoverDwellMs, 150, 10000),
+        settleMs: numberOption(this.options.hoverSettleMs, 600, 60000),
+        recordIntervalMs: numberOption(this.options.hoverRecordIntervalMs, 30000, 3600000),
+        maxPerMinute: numberOption(this.options.maxHoverRecordsPerMinute, 30, 600),
+        controlId: (element) => this.controlId(element),
+        routeTemplate: () => this.route(),
+        snapshot: (trigger) =>
+          this.snapshotsEnabled
+            ? this.requestSnapshot(trigger).then((summary) => summary?.sha256 ?? null)
+            : Promise.resolve(null),
+        emit: (data: HoverSettledData) => this.record("ui.hover.settled", null, data),
+        silent: (kind) => this.perf.silent(kind),
+        noFocusIndicator: (controlId, routeTemplate, wrappers) => {
+          if (!this.findingsEnabled || !this.active) return;
+          try {
+            this.emitFindings(
+              focusIndicatorFindings(
+                {
+                  control_id: controlId,
+                  route_template: routeTemplate,
+                  viewport_width: window.innerWidth,
+                  viewport_height: window.innerHeight,
+                  snapshot_sha256: this.currentHash,
+                  indicator_changed: false,
+                  wrappers,
+                },
+                this.options.detect,
+              ),
+            );
+          } catch {
+            /* A check failing must never affect capture. */
+          }
+        },
+      });
+      this.hovers.start();
+      this.removals.push(() => this.hovers?.stop());
+    }
 
     // A click on a <label> makes the browser click its field in the same task.
     // The label click is recorded as a click on the field's control, and that
@@ -396,19 +440,8 @@ export class Runtime {
         target.closest("[data-interactions-exclude]")
       )
         return;
-      const explicit =
-        elementTestId(target, this.testIdFilter);
-      // Non-unique structural hint: at most five ancestor tags, never a sibling scan.
-      const path: string[] = [];
-      for (
-        let node: Element | null = target;
-        node && node !== this.root && path.length < 5;
-        node = node.parentElement
-      )
-        path.unshift(node.tagName.toLowerCase());
       const id = crypto.randomUUID();
-      // The protocol bounds control_id at 128; the end of the path is nearest the control.
-      const controlId = explicit ?? path.join("/").slice(-128);
+      const controlId = this.controlId(target);
       this.record("interaction.started", id, {
         action: event.type,
         control_id: controlId,
@@ -436,6 +469,7 @@ export class Runtime {
     listen(window, "hashchange", () => this.onRoute());
     listen(window, "pagehide", (event) => {
       this.clicks?.pageHidden();
+      this.hovers?.pageHidden();
       this.recordPerf();
       // A page kept in the back-forward cache comes back: its findings still
       // wait for a viewport. Only a page that is really going away sends them as they are.
@@ -443,7 +477,10 @@ export class Runtime {
       void this.flush(true);
     });
     listen(document, "visibilitychange", () => {
-      if (document.visibilityState === "hidden") this.clicks?.pageHidden();
+      if (document.visibilityState === "hidden") {
+        this.clicks?.pageHidden();
+        this.hovers?.pageHidden();
+      }
     });
     this.startMutationEvidence();
     this.wrappedFetch = (input, init) => this.instrumentFetch(input, init, this.context);
@@ -479,6 +516,22 @@ export class Runtime {
     );
     this.triggers?.start();
     this.removals.push(() => this.triggers?.stop());
+  }
+
+  /** A control's identifier: its safe test ID, else a non-unique path of at most five tags. */
+  private controlId(target: Element): string {
+    const explicit = elementTestId(target, this.testIdFilter);
+    if (explicit) return explicit;
+    // Non-unique structural hint: at most five ancestor tags, never a sibling scan.
+    const path: string[] = [];
+    for (
+      let node: Element | null = target;
+      node && node !== this.root && path.length < 5;
+      node = node.parentElement
+    )
+      path.unshift(node.tagName.toLowerCase());
+    // The protocol bounds control_id at 128; the end of the path is nearest the control.
+    return path.join("/").slice(-128);
   }
 
   private onRoute(): void {

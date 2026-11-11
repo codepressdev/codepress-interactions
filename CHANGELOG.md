@@ -10,6 +10,15 @@ The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 
 - `data-layout-allow-overlap` allows a designed overlap (an avatar's status badge, a sticky header over content) for one pair and the overlap check only, in the component's markup. Put it on either element; its value is the other element's test IDs (space-separated, matched before the test ID filter) or `*`. It gives way when the cover sits on the centre of a control: then the overlap is reported with `allow_marker_overridden: true`. See [Allowing a designed overlap](packages/browser/README.md#allowing-a-designed-overlap). The Playwright helpers honour it with no change.
 - Protocol v2, additive: snapshot flag `allow_overlap` (16384) on elements carrying the marker, an optional `allow_overlap` table of allowed row pairs in the snapshot body (the marker's value is never recorded), and the overlap evidence key `allow_marker_overridden`.
+- `@codepress/interactions-browser`: hover and keyboard-focus follow-through. A mouse or pen pointer resting on a control for `hoverDwellMs` (150 ms), or keyboard focus (`:focus-visible`), is followed like a click; when something happens it is sent as a new `ui.hover.settled` event (`kind`, `control_id`, `route_template`, `dwell_ms`, `settle_ms`, booleans `transition_started`, `animation_started`, `nodes_added`, `overlay_opened`, `expanded_changed`, `class_changed`, `style_changed`, `snapshot_sha256`, `has_hover_handler`). Touch is never a hover. Limited to one event per kind, control and route every 30 s and 30 per minute per page. New options `hovers`, `hoverDwellMs`, `hoverSettleMs`, `hoverRecordIntervalMs`, `maxHoverRecordsPerMinute`. See [Hover and focus follow-through](packages/browser/README.md#hover-and-focus-follow-through).
+- Snapshot triggers `hover` and `focus`: taken when a hover or keyboard focus opened a dialog, tooltip, menu, listbox or popover, so the layout checks run on it.
+- `perf.summary` gains `hovers_silent` and `focus_silent`, the hovers and keyboard focuses that changed nothing.
+- Check `a11y.no_focus_indicator`: keyboard focus with no visible change to the outline, box shadow, border or background of the element or its two nearest ancestors. `focusIndicatorFindings` in `@codepress/interactions-browser/detect`.
+- Protocol v2, additive: the `ui.hover.settled` event, the two trigger values, the two summary fields and the check name. A receiver must accept them before an SDK that sends them is deployed.
+
+### Changed
+
+- Click follow-through runs on a follow-through observer shared with hovers and focus (the same mutation observer configuration, settle and timeout timers and dialog detection). Click events are unchanged.
 
 ## 1.1.0
 

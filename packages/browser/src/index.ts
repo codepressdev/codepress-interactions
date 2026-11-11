@@ -8,6 +8,8 @@ export type {
   ClickSettledData,
   Diagnostics,
   EvidenceEvent,
+  HoverKind,
+  HoverSettledData,
   InteractionHandle,
   InteractionOptions,
   PerfSummaryData,

@@ -3,14 +3,12 @@
  * Everything here is inferred from timing (attribution "inferred"); requests
  * observed in the window are counted, never attached to the click as explicit.
  */
+import { DIALOGS, Follower, observeOptions, scanAdded, type FollowWindow } from "./follow";
 import type { PerfSignals, SignalCounters } from "./perf";
 import { INTERACTIVE } from "./snapshot";
 import type { ClickEndReason, ClickSettledData } from "./types";
 import { clampMs, now } from "./util";
 
-const DIALOGS = 'dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="true"]';
-/** Elements inspected for a dialog per mutation callback, across all added subtrees. */
-const DIALOG_SCAN_BUDGET = 256;
 const MAX_COUNT = 1_000_000;
 /** Text entry and pickers: focusing one is the click's visible effect (a caret or a picker). */
 const FIELD =
@@ -30,16 +28,13 @@ export interface ClickHost {
   emit(interactionId: string, data: ClickSettledData): void;
 }
 
-interface ClickWindow {
+interface ClickWindow extends FollowWindow {
   id: string;
   control: Element;
   controlId: string;
   routeTemplate: string | null;
-  t0: number;
   before: string | null;
   firstFeedback: number | null;
-  lastEffect: number;
-  inflight: number;
   mutations: number;
   requests: number;
   failed: number;
@@ -61,24 +56,12 @@ interface ClickWindow {
   selectionChanged: boolean;
   /** A later pointer or key input happened while this click was open. */
   laterInput: boolean;
-  quiet?: ReturnType<typeof setTimeout>;
-  hard?: ReturnType<typeof setTimeout>;
 }
 
-const OBSERVE: MutationObserverInit = {
-  subtree: true,
-  childList: true,
-  characterData: true,
-  attributes: true,
-  attributeFilter: [
-    "class", "hidden", "open", "disabled", "aria-expanded", "aria-hidden",
-    "aria-busy", "aria-selected", "aria-checked", "aria-pressed", "aria-modal",
-  ],
-};
+const isDialog = (element: Element): boolean => element.matches(DIALOGS);
 
 export class ClickEffects {
-  private current: ClickWindow | null = null;
-  private observer?: MutationObserver;
+  private follow: Follower<ClickWindow, "page_hidden">;
   private removals: (() => void)[] = [];
   private active = false;
   /** Settled clicks whose after-snapshot is still being taken. */
@@ -86,37 +69,38 @@ export class ClickEffects {
   /** The text selection just before the last pointer press's default action. */
   private pressSelection: SelectionMark | null = null;
 
-  constructor(private host: ClickHost) {}
+  constructor(private host: ClickHost) {
+    this.follow = new Follower<ClickWindow, "page_hidden">({
+      root: host.root,
+      observe: observeOptions(),
+      settleMs: host.settleMs,
+      timeoutMs: host.timeoutMs,
+      records: (click, records) => {
+        click.mutations = Math.min(MAX_COUNT, click.mutations + records.length);
+        // Dialog detection inspects a bounded number of records per callback.
+        for (let i = 0; i < records.length && i < 32 && !click.dialogOpened; i++) {
+          const record = records[i];
+          if (record.type !== "attributes") continue;
+          const target = record.target as Element;
+          if (
+            (record.attributeName === "open" && target.matches?.("dialog[open]")) ||
+            (record.attributeName === "aria-modal" && target.matches?.(DIALOGS))
+          )
+            click.dialogOpened = true;
+        }
+        if (!click.dialogOpened && scanAdded(records, isDialog)) click.dialogOpened = true;
+        this.effect(click, true);
+      },
+      ended: (click, reason) => this.finish(click, reason),
+    });
+  }
+
+  private get current(): ClickWindow | null {
+    return this.follow.current;
+  }
 
   start(): void {
     this.active = true;
-    this.observer = new MutationObserver((records) => {
-      try {
-        const click = this.current;
-        if (!click) return;
-        click.mutations = Math.min(MAX_COUNT, click.mutations + records.length);
-        // Dialog detection inspects a bounded number of records per callback.
-        let budget = DIALOG_SCAN_BUDGET;
-        for (let i = 0; i < records.length && i < 32 && !click.dialogOpened; i++) {
-          const record = records[i];
-          if (record.type === "attributes") {
-            const target = record.target as Element;
-            if (
-              (record.attributeName === "open" && target.matches?.("dialog[open]")) ||
-              (record.attributeName === "aria-modal" && target.matches?.(DIALOGS))
-            )
-              click.dialogOpened = true;
-          }
-          for (let j = 0; j < record.addedNodes.length && j < 16 && !click.dialogOpened; j++) {
-            const node = record.addedNodes[j];
-            if (node instanceof Element) budget = this.scanForDialog(click, node, budget);
-          }
-        }
-        this.effect(click, true);
-      } catch {
-        /* Never affect the page. */
-      }
-    });
     const onFocus = (event: Event) => {
       const click = this.current;
       // Focus after a later click or key press is that input's doing (F1).
@@ -188,7 +172,7 @@ export class ClickEffects {
   begin(id: string, controlId: string, control: Element, event?: Event): void {
     if (!this.active) return;
     const previous = this.current;
-    if (previous) this.finish(previous, "overlapped");
+    if (previous) this.follow.end(previous, "overlapped");
     const t0 = now();
     const click: ClickWindow = {
       id,
@@ -227,11 +211,8 @@ export class ClickEffects {
     } catch {
       /* Unknown target: reported as not interactive. */
     }
-    this.current = click;
     // Observed only while a click is open: idle pages pay nothing.
-    this.observer?.observe(this.host.root, OBSERVE);
-    click.hard = setTimeout(() => this.finish(click, "timeout"), this.host.timeoutMs);
-    this.scheduleQuiet(click);
+    this.follow.open(click);
   }
 
   /** Counts a request started now; returns its completion callback. */
@@ -268,7 +249,7 @@ export class ClickEffects {
 
   /** Page is going away: report the open click as incomplete, synchronously. */
   pageHidden(): void {
-    if (this.current) this.finish(this.current, "page_hidden");
+    if (this.current) this.follow.end(this.current, "page_hidden");
     // Settled clicks still waiting for their after-snapshot are reported now,
     // without an after hash, so page unload cannot lose them.
     for (const report of this.awaitingAfter) report();
@@ -277,12 +258,7 @@ export class ClickEffects {
   stop(): void {
     this.active = false;
     this.awaitingAfter.clear();
-    if (this.current) {
-      clearTimeout(this.current.quiet);
-      clearTimeout(this.current.hard);
-      this.current = null;
-    }
-    this.observer?.disconnect();
+    this.follow.stop();
     for (const remove of this.removals) remove();
     this.removals = [];
   }
@@ -298,39 +274,14 @@ export class ClickEffects {
     );
   }
 
-  /** Looks for a dialog in an added subtree, visiting at most `budget` elements. */
-  private scanForDialog(click: ClickWindow, node: Element, budget: number): number {
-    const walker = node.ownerDocument.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
-    for (let current: Node | null = node; current && budget > 0; current = walker.nextNode()) {
-      budget--;
-      if ((current as Element).matches(DIALOGS)) {
-        click.dialogOpened = true;
-        break;
-      }
-    }
-    return budget;
-  }
-
   private effect(click: ClickWindow, feedback: boolean): void {
     const at = now();
     if (feedback && click.firstFeedback === null) click.firstFeedback = at - click.t0;
-    click.lastEffect = at;
-    if (click.inflight === 0) this.scheduleQuiet(click);
+    this.follow.effect(click, at);
   }
 
-  private scheduleQuiet(click: ClickWindow): void {
-    clearTimeout(click.quiet);
-    click.quiet = setTimeout(() => {
-      if (this.current === click && click.inflight === 0) this.finish(click, "settled");
-    }, this.host.settleMs);
-  }
-
+  /** Reports a click the follower ended. */
   private finish(click: ClickWindow, reason: ClickEndReason): void {
-    if (this.current !== click) return;
-    this.current = null;
-    this.observer?.disconnect();
-    clearTimeout(click.quiet);
-    clearTimeout(click.hard);
     const end = reason === "settled" ? click.lastEffect : now();
     const available = this.host.perf.available;
     const data: ClickSettledData = {

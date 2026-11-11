@@ -4,7 +4,7 @@ What the browser SDK sends, as JSON Schema (draft 2020-12) with a real sample of
 
 | File | What it is |
 | --- | --- |
-| [`v2-batch.schema.json`](v2-batch.schema.json), [`v2-batch.json`](v2-batch.json) | An event batch: clicks, click follow-through, snapshots taken, findings, performance summaries, requests. |
+| [`v2-batch.schema.json`](v2-batch.schema.json), [`v2-batch.json`](v2-batch.json) | An event batch: clicks, click, hover and focus follow-through, snapshots taken, findings, performance summaries, requests. |
 | [`v2-snapshot.schema.json`](v2-snapshot.schema.json), [`v2-snapshot.json`](v2-snapshot.json) | One screen as element boxes (a snapshot body). |
 | [`v1-batch.schema.json`](v1-batch.schema.json), [`v1-batch.json`](v1-batch.json) | The v1 batch, still sent by the Python SDK. |
 | [`generate-v2.mjs`](generate-v2.mjs) | Source of the v2 schemas. Edit this, then run `node protocol/generate-v2.mjs protocol`. Never edit the generated `.schema.json` files by hand. |
@@ -21,9 +21,10 @@ Every event has the same envelope: `event_id`, `interaction_id` (the click or ac
 | --- | --- |
 | `interaction.started` | A click or submit: `action`, `control_id` (a test ID that passed the SDK's filter, or a short tag path) and, for clicks, `target_key` (an opaque per-session number for the element clicked; only equality means anything). |
 | `ui.click.settled` | What followed a click until the page went quiet: time to first feedback, settle time, mutation, request, failure, error and long task counts, layout shift, whether the route changed, a dialog opened, focus moved, a value changed, a field took focus, the selection changed or a new tab opened, and the screen hashes before and after. |
-| `ui.snapshot` | A snapshot was taken: its `sha256`, trigger, route template, viewport, theme, element count, size, and walk timing. The body itself travels separately. |
+| `ui.hover.settled` | Added in 1.2.0. What followed a mouse or pen pointer resting on a control (`kind: "pointer"`, never touch) or keyboard focus reaching one (`kind: "focus"`) until the page went quiet: dwell and settle time, whether a transition or animation started, elements were added, an overlay (dialog, tooltip, menu, listbox, popover) opened, `aria-expanded` changed, or a class or inline style changed, whether the control has a React hover handler (`null` on non-React pages), and the hash of the snapshot taken when an overlay opened. Sent only when something happened; silent hovers and focuses are counted in `perf.summary`. |
+| `ui.snapshot` | A snapshot was taken: its `sha256`, trigger (`route`, `click`, `resize`, `visible`, `manual`, and since 1.2.0 `hover` and `focus`), route template, viewport, theme, element count, size, and walk timing. The body itself travels separately. |
 | `ui.finding` | A check matched (see below). |
-| `perf.summary` | Layout shifts, event timing, long tasks, image and script errors since the last summary. A signal the browser does not support is `null` and listed in `unavailable`, never `0`. |
+| `perf.summary` | Layout shifts, event timing, long tasks, image and script errors since the last summary, and (since 1.2.0) `hovers_silent` and `focus_silent`, the hovers and keyboard focuses that changed nothing. A signal the browser does not support is `null` and listed in `unavailable`, never `0`. |
 | `ui.state.changed`, `request.started`, `request.completed`, `capture.*`, `operation.*` | The v1 events, unchanged. |
 
 ## Snapshot bodies
