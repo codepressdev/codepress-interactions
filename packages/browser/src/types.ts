@@ -47,6 +47,8 @@ export interface InteractionOptions {
   snapshots?: boolean;
   /** Elements per snapshot before it is marked `truncated`. Default 5000 (max 50000). */
   maxElements?: number;
+  /** Text elements per snapshot whose contrast is worked out; later text is not measured. Default 2000 (max 50000); 0 turns contrast off. */
+  maxContrastElements?: number;
   /** Main-thread time per walk slice before yielding. Default 6 ms (max 50). */
   maxSliceMs?: number;
   /** Uncompressed body size cap; larger bodies drop trailing elements and are `truncated`. Default 1,500,000. */
@@ -275,6 +277,8 @@ export interface PerfSummaryData {
   event_timing_max_ms: number | null;
   image_error_count: number | null;
   uncaught_error_count: number | null;
+  /** Text elements on screens snapshotted in this window whose contrast could not be measured. Absent before 1.2.0. */
+  contrast_unknown?: number;
   unavailable: SignalName[];
   /** Mouse or pen hovers that rested past the dwell and changed nothing observable (1.2.0). Absent when zero. */
   hovers_silent?: number;

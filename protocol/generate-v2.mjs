@@ -147,6 +147,7 @@ const PerfData = {
     event_timing_max_ms: nullable(ms),
     image_error_count: nullable(count),
     uncaught_error_count: nullable(count),
+    contrast_unknown: { ...count, description: "Text elements on screens snapshotted in this window whose contrast could not be measured: an image or gradient behind them, opacity below 1 on the way up, or (looked for only around text measuring below 4.5:1) a filter or blend mode on the way up or a positioned layer overlapping them. Absent when zero (and before 1.2.0)." },
     unavailable: { type: "array", uniqueItems: true, maxItems: 5, items: { type: "string", enum: SIGNALS } },
     hovers_silent: { ...count, description: "Mouse or pen hovers in this window that rested past the dwell and changed nothing observable. Absent when zero (always with hovers: false, and before 1.2.0)." },
     focus_silent: { ...count, description: "Keyboard focuses in this window that changed nothing observable. Absent when zero (always with hovers: false, and before 1.2.0)." },
@@ -174,7 +175,7 @@ const ElementRef = strict(
 const FindingData = {
   ...strict(
     {
-      check: { ...str(64, "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$"), description: "Check identifier: layout.overlap, layout.spill, layout.page_h_scroll, layout.offscreen_control, layout.small_tap_target, layout.clipped_text, click.dead_click, click.rage_click, click.slow_feedback, click.silent_failure, click.error_after_click, stability.stuck_busy, stability.layout_shift, stability.slow_input, stability.broken_image or a11y.no_focus_indicator (added in 1.2.0: keyboard focus reached control_id and its outline, box shadow, border colours and background colour, and those of two ancestors, were the same focused and unfocused; evidence kind_focus is true)." },
+      check: { ...str(64, "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,3}$"), description: "Check identifier: layout.overlap, layout.spill, layout.page_h_scroll, layout.offscreen_control, layout.small_tap_target, layout.clipped_text, click.dead_click, click.rage_click, click.slow_feedback, click.silent_failure, click.error_after_click, stability.stuck_busy, stability.layout_shift, stability.slow_input, stability.broken_image, a11y.low_contrast (1.2.0), a11y.unnamed_control (1.2.0) or a11y.no_focus_indicator (added in 1.2.0: keyboard focus reached control_id and its outline, box shadow, border colours and background colour, and those of two ancestors, were the same focused and unfocused; evidence kind_focus is true)." },
       check_version: int(1, 1000),
       fingerprint: { type: "string", pattern: "^[0-9a-f]{16,64}$", description: "Stable grouping key: SHA-256 (first 32 hex) of check, route_template, viewport width band and the elements' stable_id (or control_id); never coordinates, scroll offsets or text." },
       route_template: nullable(str(256, ROUTE)),
@@ -357,7 +358,27 @@ const snapshot = {
       }),
       description: "Added in 1.2.0. Overlaps allowed in the markup with data-layout-allow-overlap, resolved in the page to row pairs: a marker's space-separated names match elements whose data-interaction-id or data-testid has that value (before the test ID filter), and * matches any element. Only pairs whose boxes intersect are listed, at most 10000. The marker's value is never recorded. Absent when no recorded element carries the marker.",
     },
-  }, ["schema_version", "route_template", "viewport", "document", "element_count", "truncated", "torn", "legend", "dictionaries", "elements", "text_boxes", "hit_tests"]),
+    contrast: {
+      ...strict({
+        element: col(int(0, 49999)),
+        ratio: col(num(1, 21), "WCAG 2.x contrast ratio of the text colour (alpha composited) against the background behind it, rounded down to 2 decimal places."),
+        font_px: col(num(0, 100000), "Computed font size in CSS px, rounded to 0.01."),
+        bold: col({ type: "boolean" }, "Computed font weight 700 or more."),
+      }),
+      description: "Text below 4.5:1, the highest WCAG AA threshold (text at or above it meets every size's minimum and is not listed). Visible elements with direct text, not aria-hidden and not a disabled or aria-disabled control (or inside one), whose background could be worked out: background colours composited up the ancestors onto the canvas (white, or black when the root's color-scheme is dark). Text is left out (and counted in perf.summary contrast_unknown) when a background image or gradient or opacity below 1 is on the way up, its colour is not sRGB, or (looked for only around text measuring below 4.5:1) a filter or mix-blend-mode is on the way up or a positioned element that paints its own layer and is not an ancestor overlaps it. Contrast is worked out for at most maxContrastElements (default 2000) text elements per snapshot. Colours are never recorded. Absent before 1.2.0.",
+    },
+    unnamed_controls: {
+      ...strict({
+        element: col(int(0, 49999)),
+        has_title: col({ type: "boolean" }, "The control has a title attribute (blank, since a non-blank one would name it)."),
+        icon_only: col({ type: "boolean" }, "The control holds an svg, img or picture and no text, or is an image input."),
+      }),
+      description: "Visible, enabled interactive elements with a role, not aria-hidden, whose accessible name is empty: no aria-labelledby target with text, aria-label, associated label with text, alt (image inputs), title, placeholder, own text (for roles named from content: button, link, checkbox, radio, switch, tab, menu items, option, treeitem) or value (button-type inputs; submit and reset without a value have a default name). Worked out in the page; only these booleans are recorded. Absent before 1.2.0.",
+    },
+  }, [
+    "schema_version", "route_template", "viewport", "document", "element_count", "truncated", "torn",
+    "legend", "dictionaries", "elements", "text_boxes", "hit_tests",
+  ]),
 };
 writeFileSync(`${out}/v2-batch.schema.json`, JSON.stringify(batch, null, 2) + "\n");
 writeFileSync(`${out}/v2-snapshot.schema.json`, JSON.stringify(snapshot, null, 2) + "\n");

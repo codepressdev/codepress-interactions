@@ -151,3 +151,19 @@ test("maxSnapshotBytes drops trailing rows and marks truncated", async ({ page }
   expect(out.snapshots[0].body.element_count).toBeLessThan(2000);
   expect(new TextEncoder().encode(out.snapshots[0].serialized).byteLength).toBe(summary.bytes);
 });
+
+test("maxSnapshotBytes also drops contrast and unnamed-control rows past the kept elements", async ({ page }) => {
+  await openPage(page, '<p style="color:#bbb;margin:0">Faint</p><button><svg width="8" height="8"></svg></button>'.repeat(1000));
+  await init(page, { maxSnapshotBytes: 30000, findings: false });
+  await page.evaluate(() => (window as any).handle.snapshot());
+  const out = await output(page);
+  expectValid(out);
+  const body = out.snapshots[0].body;
+  expect(body.truncated).toBe(true);
+  for (const table of [body.contrast, body.unnamed_controls]) {
+    expect(table.element.length).toBeGreaterThan(0);
+    const lengths = new Set((Object.values(table) as unknown[][]).map((column) => column.length));
+    expect(lengths.size).toBe(1);
+    expect(Math.max(...table.element)).toBeLessThan(body.element_count);
+  }
+});

@@ -15,6 +15,7 @@ import {
   type ResolvedOptions,
   boundEvidence,
 } from "./types";
+import { lowContrast, unnamedControl } from "./a11y";
 import { FIXED_POSITION, SnapshotView, area, intersect, type Content, type Rect } from "./view";
 
 const r2 = (value: number): number => {
@@ -23,7 +24,7 @@ const r2 = (value: number): number => {
 };
 const ratio = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 10000 : 0);
 
-interface Context {
+export interface Context {
   view: SnapshotView;
   body: SnapshotBody;
   options: ResolvedOptions;
@@ -32,7 +33,7 @@ interface Context {
   out: Finding[];
 }
 
-function emit(
+export function emit(
   ctx: Context,
   type: CheckName,
   subject: number | null,
@@ -87,6 +88,8 @@ export function layoutFindings(body: SnapshotBody, sha256: string | null, option
   }
   if (on("small_tap_target")) smallTapTarget(ctx);
   if (on("broken_image")) brokenImage(ctx);
+  if (on("low_contrast")) lowContrast(ctx);
+  if (on("unnamed_control")) unnamedControl(ctx);
   return ctx.out;
 }
 

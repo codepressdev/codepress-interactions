@@ -24,7 +24,7 @@ Every event has the same envelope: `event_id`, `interaction_id` (the click or ac
 | `ui.hover.settled` | Added in 1.2.0. What followed a mouse or pen pointer resting on a control (`kind: "pointer"`, never touch) or keyboard focus reaching one (`kind: "focus"`) until the page went quiet: dwell and settle time, whether a transition or animation started, elements were added, an overlay (dialog, tooltip, menu, listbox, popover) opened, `aria-expanded` changed, or a class or inline style changed, whether the control has a React hover handler (`null` on non-React pages), and the hash of the snapshot taken when an overlay opened. Sent only when something happened; silent hovers and focuses are counted in `perf.summary`. |
 | `ui.snapshot` | A snapshot was taken: its `sha256`, trigger (`route`, `click`, `resize`, `visible`, `manual`, and since 1.2.0 `hover` and `focus`), route template, viewport, theme, element count, size, and walk timing. The body itself travels separately. |
 | `ui.finding` | A check matched (see below). |
-| `perf.summary` | Layout shifts, event timing, long tasks, image and script errors since the last summary, and (since 1.2.0) `hovers_silent` and `focus_silent`, the hovers and keyboard focuses that changed nothing (absent when zero). A signal the browser does not support is `null` and listed in `unavailable`, never `0`. |
+| `perf.summary` | Layout shifts, event timing, long tasks, image and script errors since the last summary, and (since 1.2.0) `hovers_silent` and `focus_silent`, the hovers and keyboard focuses that changed nothing, and `contrast_unknown`, text on new screens whose contrast could not be measured (each absent when zero). A signal the browser does not support is `null` and listed in `unavailable`, never `0`. |
 | `ui.state.changed`, `request.started`, `request.completed`, `capture.*`, `operation.*` | The v1 events, unchanged. |
 
 ## Snapshot bodies
@@ -35,6 +35,8 @@ A body is columnar: every array under `elements` has `element_count` entries, an
 - `text_boxes`: for elements with direct text, the box the rendered text occupies and its line count. Geometry only.
 - `hit_tests`: for visible controls, how many of five points (center and four inset points) land on something else, which ones, and the row on top.
 - `allow_overlap` (optional, since 1.2.0): overlaps the page allows with `data-layout-allow-overlap`, as row pairs (`other` is `-1` for any element). The marker's value is resolved in the page and never recorded. Absent when no element carries the marker.
+- `contrast` (since 1.2.0): for visible text below 4.5:1 that is not hidden from assistive technology, the WCAG contrast ratio against the background measured in the page, the font size and whether it is bold. Colours are never recorded; text whose background is unknown is left out.
+- `unnamed_controls` (since 1.2.0): shown controls whose accessible name is empty, with whether they have a blank `title` and whether they hold only an icon. Labels are never recorded.
 - `truncated`: the walk stopped at its element or byte limit. `torn`: the page changed between slices of the walk, so positions may not belong to one moment.
 
 The body's `sha256` is over its exact uncompressed UTF-8 bytes. A body is identified by that hash and sent once per page session.

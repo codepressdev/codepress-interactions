@@ -1,9 +1,14 @@
 /**
  * Accessibility checks over what the browser SDK measured in the page. The
- * measurements themselves (computed styles) never leave the page; these checks
- * see only their outcome.
+ * measurements themselves (computed styles, colours, labels and text) never
+ * leave the page; these checks see only their outcome: a focus observation, and
+ * the snapshot body's `contrast` and `unnamed_controls` tables (ratios, font
+ * sizes and booleans).
  */
+import { requiredRatio } from "../color";
+import { FLAGS } from "../format";
 import { fingerprint, viewportBand } from "./fingerprint";
+import { emit, type Context } from "./layout";
 import { CHECK_IDS, CHECK_VERSION, boundEvidence, resolveOptions, type DetectOptions, type Finding } from "./types";
 
 /** One keyboard focus, as the SDK observed it. */
@@ -59,4 +64,51 @@ export function focusIndicatorFindings(observation: FocusObservation, options: D
       }),
     },
   ];
+}
+
+// ---- Snapshot measurements: contrast and accessible names -------------------
+
+const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
+const rows = (columns: Record<string, unknown[]> | undefined, keys: string[]): number =>
+  columns ? Math.min(...keys.map((key) => (Array.isArray(columns[key]) ? columns[key].length : 0))) : 0;
+
+/** Text below the WCAG 1.4.3 minimum for its size: 4.5:1, or 3:1 for large text (24px, or 18.66px bold). */
+export function lowContrast(ctx: Context): void {
+  const { view, body } = ctx;
+  const table = body.contrast;
+  const n = rows(table as Record<string, unknown[]> | undefined, ["element", "ratio", "font_px", "bold"]);
+  const dark = body.viewport?.theme === "dark";
+  for (let i = 0; i < n; i++) {
+    const row = table!.element[i];
+    const ratio = num(table!.ratio[i]);
+    const fontPx = num(table!.font_px[i]);
+    if (!Number.isInteger(row) || row < 0 || row >= view.n || ratio === null || fontPx === null) continue;
+    if (!view.shown(row) || view.has(row, FLAGS.aria_hidden)) continue;
+    const bold = table!.bold[i] === true;
+    const required = requiredRatio(fontPx, bold);
+    if (ratio >= required) continue;
+    emit(ctx, "low_contrast", row, null, {
+      contrast_ratio: ratio,
+      required_ratio: required,
+      font_px: fontPx,
+      bold,
+      theme_dark: dark,
+    });
+  }
+}
+
+/** A shown control with no accessible name. */
+export function unnamedControl(ctx: Context): void {
+  const { view, body } = ctx;
+  const table = body.unnamed_controls;
+  const n = rows(table as Record<string, unknown[]> | undefined, ["element", "has_title", "icon_only"]);
+  for (let i = 0; i < n; i++) {
+    const row = table!.element[i];
+    if (!Number.isInteger(row) || row < 0 || row >= view.n) continue;
+    if (!view.shown(row) || view.has(row, FLAGS.aria_hidden)) continue;
+    emit(ctx, "unnamed_control", row, null, {
+      has_title: table!.has_title[i] === true,
+      has_icon_only: table!.icon_only[i] === true,
+    });
+  }
 }

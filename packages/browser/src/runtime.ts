@@ -1,7 +1,7 @@
 import { ClickEffects } from "./click-effects";
 import { checkEvents, checkSnapshot, focusIndicatorFindings } from "./detect/index";
 import type { TimelineEvent } from "./detect/timeline";
-import { toFindingData, type Finding } from "./detect/types";
+import { toFindingData, type CheckName, type Finding } from "./detect/types";
 import type { SnapshotBody } from "./format";
 import { HoverEffects } from "./hover-effects";
 import { PerfSignals } from "./perf";
@@ -258,6 +258,12 @@ export class Runtime {
       snapshots: { ...this.snapshotStats, last: this.lastSnapshot },
       signals: { ...this.perf.available },
     };
+  }
+
+  /** The check is among `detect.checks` (all are by default, matching resolveOptions). */
+  private checkOn(name: CheckName): boolean {
+    const checks = this.options.detect?.checks;
+    return !Array.isArray(checks) || checks.includes(name);
   }
 
   private route(): string | null {
@@ -998,6 +1004,12 @@ export class Runtime {
     const result = await walkSnapshot({
       root: this.root,
       maxElements: numberOption(this.options.maxElements, 5000, 50000),
+      // A check left out of detect.checks is not measured either: its style reads are skipped.
+      maxContrastElements:
+        this.options.maxContrastElements === 0 || !this.checkOn("low_contrast")
+          ? 0
+          : numberOption(this.options.maxContrastElements, 2000, 50000),
+      unnamedControls: this.checkOn("unnamed_control"),
       maxSliceMs: numberOption(this.options.maxSliceMs, 6, 50),
       ignoreSelector: validSelector(this.options.ignoreSelector),
       routeTemplate,
@@ -1050,6 +1062,7 @@ export class Runtime {
     }
     this.sentHashes.add(sha256);
     this.record("ui.snapshot", null, data);
+    this.perf.countContrastUnknown(result.contrastUnknown);
     this.runSnapshotChecks(body, sha256);
     // The first screen also reports which performance signals this browser has.
     if (!this.reportedSignals) this.recordPerf(true);

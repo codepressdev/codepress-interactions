@@ -18,6 +18,7 @@ export interface SignalCounters {
   uncaughtErrorCount: number;
   hoversSilent: number;
   focusSilent: number;
+  contrastUnknown: number;
 }
 
 export const emptyCounters = (): SignalCounters => ({
@@ -31,6 +32,7 @@ export const emptyCounters = (): SignalCounters => ({
   uncaughtErrorCount: 0,
   hoversSilent: 0,
   focusSilent: 0,
+  contrastUnknown: 0,
 });
 
 const supported = (type: string): boolean =>
@@ -131,12 +133,20 @@ export class PerfSignals {
     );
   }
 
+  /**
+   * Counts text on a new screen whose contrast could not be measured. Not a
+   * signal click follow-through listens to, so subscribers are not told.
+   */
+  countContrastUnknown(count: number): void {
+    if (count > 0) this.totals.contrastUnknown += count;
+  }
+
   /** Returns and resets the totals since the previous call, or null when nothing happened. */
   takeSummary(force = false): PerfSummaryData | null {
     const t = this.totals;
     const any =
       t.layoutShiftCount || t.longTaskCount || t.eventTimingCount ||
-      t.imageErrorCount || t.uncaughtErrorCount || t.hoversSilent || t.focusSilent;
+      t.imageErrorCount || t.uncaughtErrorCount || t.hoversSilent || t.focusSilent || t.contrastUnknown;
     if (!any && !force) return null;
     const a = this.available;
     const at = now();
@@ -152,9 +162,10 @@ export class PerfSignals {
       uncaught_error_count: a.uncaught_error ? t.uncaughtErrorCount : null,
       unavailable: (Object.keys(a) as SignalName[]).filter((name) => !a[name]),
     };
-    // Absent when zero, so a page with hovers off (or none silent) sends the same summary as before 1.2.0.
+    // Absent when zero, so a page with hovers off (or none silent) and every text measured sends the same summary as before 1.2.0.
     if (t.hoversSilent) summary.hovers_silent = Math.min(1_000_000, t.hoversSilent);
     if (t.focusSilent) summary.focus_silent = Math.min(1_000_000, t.focusSilent);
+    if (t.contrastUnknown) summary.contrast_unknown = Math.min(1_000_000, t.contrastUnknown);
     this.totals = emptyCounters();
     this.windowStart = at;
     return summary;
