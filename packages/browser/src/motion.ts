@@ -27,6 +27,8 @@ const MAX_RUNS = 256;
 const MAX_RESOLVE = 128;
 /** Visibility looks (layout reads) per sweep. */
 const MAX_LOOKS = 200;
+/** Sorting newly discovered animations stops after this long and continues in a later sweep. */
+const SORT_SLICE_MS = 4;
 /** A loop seen visible is looked at again after its interval doubles, up to this many loop windows. */
 const MAX_BACKOFF = 16;
 /** Infinite runs followed by event; more are left to the sweep, which finds them with `document.getAnimations()`. */
@@ -104,8 +106,9 @@ interface Look {
 /** An infinite animation the sweep found: facts read once, and when to look again. */
 interface Loop {
   el: Element;
-  stable: string;
-  opacity: boolean;
+  /** Read at the first look. */
+  stable: string | null;
+  opacity: boolean | null;
   nextLook: number;
   lookEvery: number;
 }
@@ -151,6 +154,8 @@ export class MotionTracker {
   private discoverAt = 0;
   /** Loops found by discovery or past the follow limit, looked at when due. */
   private known: { anim: Animation; loop: Loop }[] = [];
+  /** Animations discovery found and that are not yet classified. */
+  private unsorted: Animation[] = [];
   private observing = false;
   private frame = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -224,6 +229,7 @@ export class MotionTracker {
     this.pending = [];
     this.recent = [];
     this.known = [];
+    this.unsorted = [];
     this.startListeners.clear();
   }
 
@@ -395,7 +401,7 @@ export class MotionTracker {
       else if (this.sweeps) {
         if (run.infinite) {
           run.lookEvery = this.deps.options.offscreenLoopMs;
-          run.nextLook = run.start + run.lookEvery + 1;
+          run.nextLook = this.tick(run.start + run.lookEvery + 1);
         }
         this.schedule(run.infinite ? run.nextLook : run.start + this.deps.options.stuckAnimationMs);
       }
@@ -436,7 +442,7 @@ export class MotionTracker {
     const loop = this.loopOf(run.anim);
     this.loops.set(run.anim, loop);
     if (!loop || this.known.length >= MAX_KNOWN) return;
-    loop.nextLook = run.start + loop.lookEvery + 1;
+    loop.nextLook = this.tick(run.start + loop.lookEvery + 1);
     this.known.push({ anim: run.anim, loop });
     this.schedule(loop.nextLook);
   }
@@ -499,7 +505,7 @@ export class MotionTracker {
           continue;
         }
         if (budget <= 0) {
-          later(now + 5 * MIN_SWEEP_MS);
+          later(now + MIN_SWEEP_MS);
           continue;
         }
         budget--;
@@ -507,7 +513,7 @@ export class MotionTracker {
         this.evaluate(run, this.look(run), now);
         if (due) {
           run.lookEvery = this.backoff(run.lookEvery);
-          run.nextLook = now + run.lookEvery;
+          run.nextLook = this.tick(now + run.lookEvery);
           later(run.nextLook);
         }
       } else if (elapsed >= stuckAnimationMs || jank) {
@@ -549,18 +555,26 @@ export class MotionTracker {
   ): boolean {
     const { offscreenLoopMs } = this.deps.options;
     if (now >= this.discoverAt && typeof document.getAnimations === "function") {
+      // `getAnimations()` brings style up to date, so sorting and looks in the same task cost little more.
       const tracked = new Set(this.runs.map((run) => run.anim));
       let fresh = false;
       for (const anim of document.getAnimations()) {
         if (tracked.has(anim) || this.loops.has(anim)) continue;
         fresh = true;
-        const loop = this.loopOf(anim);
-        this.loops.set(anim, loop);
-        if (loop && this.known.length < MAX_KNOWN) this.known.push({ anim, loop });
+        this.loops.set(anim, null);
+        this.unsorted.push(anim);
       }
       this.discoverEvery = fresh || !this.discoverEvery ? offscreenLoopMs : this.backoff(this.discoverEvery);
       this.discoverAt = now + this.discoverEvery;
     }
+    const sortUntil = performance.now() + SORT_SLICE_MS;
+    while (this.unsorted.length && performance.now() < sortUntil) {
+      const anim = this.unsorted.pop()!;
+      const loop = this.loopOf(anim);
+      this.loops.set(anim, loop);
+      if (loop && this.known.length < MAX_KNOWN) this.known.push({ anim, loop });
+    }
+    if (this.unsorted.length) later(now + MIN_SWEEP_MS);
     for (let i = this.known.length - 1; i >= 0; i--) {
       const { anim, loop } = this.known[i];
       if (now < loop.nextLook) {
@@ -574,26 +588,34 @@ export class MotionTracker {
       }
       const current = Number(anim.currentTime);
       if (state !== "running" || !Number.isFinite(current)) {
-        loop.nextLook = now + loop.lookEvery;
+        loop.nextLook = this.tick(now + loop.lookEvery);
         later(loop.nextLook);
         continue;
       }
       if (current <= offscreenLoopMs) {
-        loop.nextLook = now + offscreenLoopMs - current + 1;
+        loop.nextLook = this.tick(now + offscreenLoopMs - current + 1);
         later(loop.nextLook);
         continue;
       }
-      if (this.done(loop.stable, "offscreen_loop", route)) {
+      if (loop.stable !== null && this.done(loop.stable, "offscreen_loop", route)) {
         this.known.splice(i, 1);
         continue;
       }
       if (budget <= 0) {
-        loop.nextLook = now + 5 * MIN_SWEEP_MS;
-        later(loop.nextLook);
+        later(now + MIN_SWEEP_MS);
         continue;
       }
       budget--;
-      loop.nextLook = now + loop.lookEvery;
+      if (loop.stable === null) {
+        loop.stable = this.stableId(loop.el);
+        if (this.done(loop.stable, "offscreen_loop", route)) {
+          this.known.splice(i, 1);
+          continue;
+        }
+      }
+      if (loop.opacity === null)
+        loop.opacity = (anim.effect as KeyframeEffect | null)?.getKeyframes().some((frame) => "opacity" in frame) ?? false;
+      loop.nextLook = this.tick(now + loop.lookEvery);
       loop.lookEvery = this.backoff(loop.lookEvery);
       later(loop.nextLook);
       const box = loop.el.getBoundingClientRect();
@@ -622,7 +644,7 @@ export class MotionTracker {
       };
       this.evaluate(run, this.look(run), now, ["offscreen_loop"]);
     }
-    return this.known.length > 0;
+    return this.known.length > 0 || this.unsorted.length > 0;
   }
 
   /** What does not change about an infinite animation, read once; null when it is not one to follow. */
@@ -633,17 +655,28 @@ export class MotionTracker {
       !effect ||
       !(el instanceof Element) ||
       !this.deps.root.contains(el) ||
-      effect.getComputedTiming().iterations !== Infinity ||
+      effect.getTiming().iterations !== Infinity ||
       el.closest("[data-interactions-exclude]")
     )
       return null;
     return {
       el,
-      stable: this.stableId(el),
-      opacity: effect.getKeyframes().some((frame) => "opacity" in frame),
+      stable: null,
+      opacity: null,
       nextLook: 0,
       lookEvery: this.deps.options.offscreenLoopMs,
     };
+  }
+
+  /**
+   * Looks are rounded up to a grid of half a loop window, so loops started at
+   * different times are looked at in the same sweep: the first layout read in
+   * a task recalculates style for every animated element, and the reads after
+   * it cost little.
+   */
+  private tick(at: number): number {
+    const step = Math.max(MIN_SWEEP_MS, this.deps.options.offscreenLoopMs / 2);
+    return Math.ceil(at / step) * step;
   }
 
   private backoff(every: number): number {
