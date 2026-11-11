@@ -109,6 +109,8 @@ interface Loop {
   /** Read at the first look. */
   stable: string | null;
   opacity: boolean | null;
+  /** Hidden by a test that needs no layout (inside an aria-hidden subtree): looked at before the rest. */
+  likely: boolean;
   nextLook: number;
   lookEvery: number;
 }
@@ -579,6 +581,9 @@ export class MotionTracker {
       if (sortUntil === Infinity) sortUntil = performance.now() + SORT_SLICE_MS;
     }
     if (this.unsorted.length) later(now + MIN_SWEEP_MS);
+    // Looks go from the end of the list: loops likely hidden come first, since
+    // each look costs layout and a sweep stops after MAX_LOOKS.
+    if (sortUntil !== Infinity) this.known.sort((a, b) => Number(a.loop.likely) - Number(b.loop.likely));
     // Looks wait for the next sweep, so discovery, sorting and looks never add up in one task.
     if (discovered) {
       later(now + MIN_SWEEP_MS);
@@ -672,6 +677,7 @@ export class MotionTracker {
       el,
       stable: null,
       opacity: null,
+      likely: !!el.closest('[aria-hidden="true"]'),
       nextLook: 0,
       lookEvery: this.deps.options.offscreenLoopMs,
     };
