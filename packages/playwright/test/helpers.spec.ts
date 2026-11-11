@@ -1,5 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
-import { captureSnapshot, expectNoFindings, findIssues } from "../src/index";
+import {
+  captureSnapshot,
+  expectNoFindings,
+  expectNoSweepFindings,
+  findIssues,
+  formatFinding,
+  sweepInteractions,
+} from "../src/index";
 
 const BROKEN = `
 <header style="position:relative;height:60px;padding:8px">
@@ -152,4 +159,179 @@ test("a bound or native testId function fails with a clear error", async ({ page
   await expect(
     captureSnapshot(page, { testId: String.prototype.trim as unknown as (value: string) => string }),
   ).rejects.toThrow(/self-contained function/);
+});
+
+// ---- Hover and focus sweep ------------------------------------------------
+
+// A CSS-only tooltip shown on :hover only, and the same tooltip also shown on :focus-visible.
+const TOOLTIP_CSS = `
+<style>
+  .tip-wrap { position: relative; display: inline-block; margin: 40px }
+  .tip { position: absolute; left: 0; top: 44px; width: 160px; padding: 4px; background: #222; color: #fff; visibility: hidden }
+  .hover-only:hover + .tip { visibility: visible }
+  .both:hover + .tip, .both:focus-visible + .tip { visibility: visible }
+</style>`;
+const HOVER_ONLY = `${TOOLTIP_CSS}
+<span class="tip-wrap"><button data-testid="help" class="hover-only">Help</button><span class="tip">Opens the guide</span></span>`;
+const HOVER_AND_FOCUS = `${TOOLTIP_CSS}
+<span class="tip-wrap"><button data-testid="help" class="both">Help</button><span class="tip">Opens the guide</span></span>`;
+
+// A navigation bar whose submenu opens on hover (and focus-within) and spills
+// out of the bar's clipped box, past the right edge of the screen.
+const SPILLING_MENU = `
+<style>
+  nav { position: relative; height: 48px; overflow: hidden; background: #eee }
+  .item { position: absolute; right: 8px; top: 8px }
+  .menu { display: none; position: absolute; left: 0; top: 36px; width: 320px; background: #fff; border: 1px solid #999 }
+  .item:hover .menu, .item:focus-within .menu { display: block }
+  .menu a { display: block; height: 28px }
+</style>
+<nav data-testid="topnav">
+  <div class="item" data-testid="account-item">
+    <button data-testid="account">Account</button>
+    <div class="menu" data-testid="account-menu"><a href="#a" data-testid="profile">Profile</a><a href="#b" data-testid="sign-out">Sign out</a></div>
+  </div>
+</nav>`;
+
+// Hover effects that keyboard users get too, and nothing broken.
+const CLEAN = `
+${TOOLTIP_CSS}
+<style>
+  .menu-wrap { position: relative; margin: 40px }
+  .menu { display: none; position: absolute; left: 0; top: 36px; width: 160px; background: #fff; border: 1px solid #999; z-index: 1 }
+  .menu-wrap:hover .menu, .menu-wrap:focus-within .menu { display: block }
+  .menu a { display: block; height: 28px }
+  a.link:hover, a.link:focus-visible { text-decoration: underline; outline: 2px solid blue }
+</style>
+<span class="tip-wrap"><button data-testid="help" class="both">Help</button><span class="tip">Opens the guide</span></span>
+<p style="margin:40px"><a class="link" href="#z" data-testid="docs">Docs</a> <input data-testid="search" aria-label="Search" style="width:160px"></p>
+<div class="menu-wrap"><button data-testid="more">More</button><div class="menu"><a href="#x" data-testid="first">First</a><a href="#y" data-testid="second">Second</a></div></div>`;
+
+test("sweep: a CSS-only :hover tooltip is hover-only content", async ({ page }) => {
+  await serve(page, HOVER_ONLY);
+  // At rest the page is clean.
+  expect(await findIssues(page)).toEqual([]);
+  const result = await sweepInteractions(page, { routeSegments: ["shop"] });
+  expect(result.controls).toBe(1);
+  expect(result.skipped).toBe(0);
+  const hoverOnly = result.findings.filter((f) => f.check === "a11y.hover_only_content");
+  expect(hoverOnly).toHaveLength(1);
+  expect(hoverOnly[0]).toMatchObject({
+    type: "hover_only_content",
+    control_id: "help",
+    route_template: "/shop/:id",
+    viewport_width: 1280,
+    viewport_height: 800,
+    subject: null,
+    evidence: { hover_overlay: true, focus_overlay: false, focus_reached: true, structural_id: false },
+  });
+  expect(hoverOnly[0].snapshot_sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(formatFinding(hoverOnly[0])).toContain("a11y.hover_only_content help on /shop/:id @1280x800: hover_overlay focus_reached");
+});
+
+test("sweep: the same tooltip also shown on :focus-visible is not reported", async ({ page }) => {
+  await serve(page, HOVER_AND_FOCUS);
+  const result = await sweepInteractions(page);
+  expect(result).toEqual({ findings: [], controls: 1, skipped: 0 });
+});
+
+test("sweep: a tooltip added by a mouseenter handler only is hover-only; one added on focus too is not", async ({ page }) => {
+  const control = (id: string, focus: boolean) => `
+<div style="position:relative;margin:40px"><button data-testid="${id}" id="${id}">${id}</button></div>
+<script>
+  (() => {
+    const button = document.getElementById("${id}");
+    const show = () => {
+      if (button.parentElement.querySelector("[role=tooltip]")) return;
+      const tip = document.createElement("div");
+      tip.setAttribute("role", "tooltip");
+      tip.style.cssText = "position:absolute;left:0;top:30px;width:120px;background:#333;color:#fff";
+      tip.textContent = "Details";
+      button.parentElement.append(tip);
+    };
+    const hide = () => button.parentElement.querySelector("[role=tooltip]")?.remove();
+    button.addEventListener("mouseenter", show);
+    button.addEventListener("mouseleave", hide);
+    ${focus ? 'button.addEventListener("focus", show); button.addEventListener("blur", hide);' : ""}
+  })();
+</script>`;
+  await serve(page, control("mouse-only", false) + control("both-ways", true));
+  const result = await sweepInteractions(page);
+  expect(result.controls).toBe(2);
+  expect(result.findings.map((f) => [f.check, f.control_id])).toEqual([["a11y.hover_only_content", "mouse-only"]]);
+});
+
+test("sweep: hover content on an element keyboard focus cannot reach is reported with focus_reached false", async ({ page }) => {
+  await serve(
+    page,
+    `${TOOLTIP_CSS}<style>.card:hover + .tip { visibility: visible }</style>
+<span class="tip-wrap"><span role="button" class="card" data-testid="card-button">Card</span><span class="tip">Hidden extra</span></span>`,
+  );
+  const [finding, ...rest] = (await sweepInteractions(page)).findings;
+  expect(rest).toEqual([]);
+  expect(finding.check).toBe("a11y.hover_only_content");
+  expect(finding.evidence).toMatchObject({ hover_overlay: true, focus_overlay: false, focus_reached: false });
+});
+
+test("sweep: a hover menu that spills out of its bar and off screen is found by the sweep, not at rest", async ({ page }) => {
+  await serve(page, SPILLING_MENU);
+  expect(await findIssues(page)).toEqual([]);
+  const result = await sweepInteractions(page);
+  // The menu's links are hidden at rest, so only the button is visited.
+  expect(result.controls).toBe(1);
+  const spill = result.findings.find((f) => f.check === "layout.spill" && f.subject?.test_id === "account-menu");
+  expect(spill, result.findings.map(formatFinding).join("\n")).toBeTruthy();
+  expect(spill!.other?.test_id).toBe("topnav");
+  // Focus opens the menu too (focus-within), so it is not hover-only.
+  expect(result.findings.some((f) => f.check === "a11y.hover_only_content")).toBe(false);
+});
+
+test("sweep: maxControls caps the controls visited and skipped counts the rest", async ({ page }) => {
+  const buttons = Array.from({ length: 6 }, (_, i) => `<button data-testid="b-${"abcdef"[i]}" style="margin:8px">B</button>`).join("");
+  await serve(page, `${buttons}<button disabled>Off</button><button style="display:none">Gone</button>`);
+  const capped = await sweepInteractions(page, { maxControls: 2 });
+  expect(capped).toEqual({ findings: [], controls: 2, skipped: 4 });
+  const none = await sweepInteractions(page, { maxControls: 0 });
+  expect(none).toEqual({ findings: [], controls: 0, skipped: 6 });
+  // Hover only, scoped to a root.
+  await serve(page, `<div id="a">${buttons}</div><div id="b"><button>One</button></div>`);
+  expect(await sweepInteractions(page, { root: "#b", focus: false })).toEqual({ findings: [], controls: 1, skipped: 0 });
+});
+
+test("sweep: a clean page has no findings", async ({ page }) => {
+  await serve(page, CLEAN);
+  const result = await sweepInteractions(page);
+  // help, docs, search and more; the menu links are hidden until hovered.
+  expect(result).toEqual({ findings: [], controls: 4, skipped: 0 });
+  await expectNoSweepFindings(page);
+});
+
+test("sweep: findings seen at rest and while hovering are each reported once", async ({ page }) => {
+  await serve(page, BROKEN + HOVER_ONLY);
+  const result = await sweepInteractions(page, { routeSegments: ["shop"] });
+  expect(result.findings.map((f) => f.check).sort()).toEqual(["a11y.hover_only_content", "layout.overlap", "layout.spill"]);
+  // Ignored fingerprints and checks narrow the result.
+  const hoverOnly = result.findings.find((f) => f.check === "a11y.hover_only_content")!;
+  const accepted = await sweepInteractions(page, { routeSegments: ["shop"], ignoreFingerprints: [hoverOnly.fingerprint] });
+  expect(accepted.findings.map((f) => f.check).sort()).toEqual(["layout.overlap", "layout.spill"]);
+  const onlyOverlap = await sweepInteractions(page, { checks: ["overlap"] });
+  expect(onlyOverlap.findings.map((f) => f.check)).toEqual(["layout.overlap"]);
+  // Hover off: nothing to compare, so no hover-only finding.
+  const focusOnly = await sweepInteractions(page, { hover: false, checks: ["hover_only_content"] });
+  expect(focusOnly.findings).toEqual([]);
+});
+
+test("expectNoSweepFindings fails with one line per finding", async ({ page }) => {
+  await serve(page, HOVER_ONLY);
+  let message = "";
+  try {
+    await expectNoSweepFindings(page);
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  expect(message).toContain("1 UI finding on /shop/42 after hovering and focusing 1 control");
+  expect(message).toContain("a11y.hover_only_content help on /:id/:id @1280x800: hover_overlay focus_reached");
+  expect(message).toContain("ignoreFingerprints");
+  const { findings } = await sweepInteractions(page);
+  await expectNoSweepFindings(page, { ignoreFingerprints: findings.map((f) => f.fingerprint) });
 });

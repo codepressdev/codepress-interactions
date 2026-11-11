@@ -1,3 +1,6 @@
+import { buildSync } from "esbuild";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { events, expectValid, init, openPage, output } from "./harness";
 
@@ -321,4 +324,54 @@ test("tooltip text, class names and styles seen on hover and focus never reach t
   const everything = [...out.serialized, ...out.snapshots.map((s) => s.serialized)].join("\n");
   expect(everything.toLowerCase()).not.toContain(S.toLowerCase());
   for (const text of ["tooltip text", "rgb(1, 2, 3)", "font-family", "outline"]) expect(everything).not.toContain(text);
+});
+
+// The page script as @codepress/interactions-playwright injects it.
+const pageScript = buildSync({
+  entryPoints: [resolve(dirname(fileURLToPath(import.meta.url)), "../../src/page-script.ts")],
+  bundle: true,
+  format: "iife",
+  target: "es2022",
+  write: false,
+}).outputFiles[0].text;
+
+test("a hover and focus sweep returns no tooltip text, class names, attribute values or data-bearing test IDs", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+       .wrap-${S} { position: relative; display: inline-block; margin: 40px }
+       .tip-${S} { position: absolute; top: 40px; left: 0; width: 200px; visibility: hidden; font-family: ${S} }
+       .btn-${S}:hover + .tip-${S} { visibility: visible }
+     </style>
+     <span class="wrap-${S}"><button class="btn-${S}" data-testid="row-${S}-42" aria-label="${S} label" title="${S} title">${S} help</button><span class="tip-${S}" role="tooltip">${S} tooltip text</span></span>
+     <a href="/orders?q=${S}" data-testid="orders" class="btn-${S}">${S} link</a><span class="tip-${S}">${S} more</span>
+     <input value="${S}-value" data-testid="search-${S}.com" placeholder="${S}">`,
+    {},
+    `/help/${S}`,
+  );
+  const results = await page.evaluate(async (script) => {
+    (0, eval)(script);
+    const api = (globalThis as any).__codepressInteractions;
+    const sweep = api.sweep({ settleMs: 50 });
+    const { elements, total } = sweep.controls(10);
+    const out: unknown[] = [total];
+    for (const element of elements) {
+      out.push(sweep.controlId(element), sweep.away());
+      sweep.arm();
+      element.dispatchEvent(new PointerEvent("pointerover", { pointerType: "mouse", bubbles: true, clientX: 50, clientY: 50 }));
+      out.push(await sweep.hovered(element));
+      sweep.arm();
+      out.push(await sweep.focus(element));
+      sweep.blur(element);
+    }
+    sweep.stop();
+    return out;
+  }, pageScript);
+  const serialized = JSON.stringify(results);
+  // Something was swept: three controls, test IDs kept or dropped by the default filter.
+  expect(results[0]).toBe(3);
+  expect(serialized).toContain('"orders"');
+  expect(serialized).toContain('"reached":true');
+  expect(serialized.toLowerCase()).not.toContain(S.toLowerCase());
+  for (const text of ["tooltip text", "font-family", "label", "title"]) expect(serialized).not.toContain(text);
 });
