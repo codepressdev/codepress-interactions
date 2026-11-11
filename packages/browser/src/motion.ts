@@ -27,6 +27,8 @@ const MAX_RUNS = 256;
 const MAX_RESOLVE = 128;
 /** Visibility looks (layout reads) per sweep. */
 const MAX_LOOKS = 200;
+/** A loop seen visible is looked at again after its interval doubles, up to this many loop windows. */
+const MAX_BACKOFF = 16;
 /** Infinite runs followed by event; more are left to the sweep, which finds them with `document.getAnimations()`. */
 const MAX_LOOPS = 64;
 /** Ended runs kept for long animation frames reported after they ended. */
@@ -39,6 +41,8 @@ const MAX_PER_CHECK = 50;
 const MAX_OPACITY_DEPTH = 32;
 /** Structural paths stop after this many tags (as in snapshot `stable_id`). */
 const PATH_DEPTH = 8;
+/** Loops followed without events (found by discovery or past MAX_LOOPS). */
+const MAX_KNOWN = 1024;
 /** The sweep never runs more often than this. */
 const MIN_SWEEP_MS = 100;
 
@@ -81,8 +85,9 @@ interface Run {
   area: number;
   longFrames: number;
   maxBlocking: number;
-  /** Visibility was looked at in this round of loop sweeps. */
-  looked: boolean;
+  /** Infinite runs: when visibility is looked at next, and the interval (doubled each time it is visible). */
+  nextLook: number;
+  lookEvery: number;
   /** Long frames already looked at for jank. */
   framesLooked: number;
 }
@@ -94,6 +99,15 @@ interface Look {
   visibility_hidden: boolean;
   aria_hidden: boolean;
   transparent: boolean;
+}
+
+/** An infinite animation the sweep found: facts read once, and when to look again. */
+interface Loop {
+  el: Element;
+  stable: string;
+  opacity: boolean;
+  nextLook: number;
+  lookEvery: number;
 }
 
 export interface MotionDeps {
@@ -125,8 +139,14 @@ export class MotionTracker {
   /** Check, route and stable ID of every finding sent (at most MAX_PER_CHECK per check). */
   private reported = new Set<string>();
   private perCheck = new Map<CheckName, number>();
-  /** Animations found by the sweep rather than by an event, looked at in this round of sweeps. */
-  private adopted = new WeakSet<Animation>();
+  /** Infinite animations found by the sweep rather than by an event, with what was learned once about each. */
+  private loops = new WeakMap<Animation, Loop | null>();
+  /** How often the sweep looks for loops no event announced: doubles while it finds none. */
+  private discoverEvery = 0;
+  /** When the sweep next calls `document.getAnimations()`. */
+  private discoverAt = 0;
+  /** Loops found by discovery or past the follow limit, looked at when due. */
+  private known: { anim: Animation; loop: Loop }[] = [];
   private observing = false;
   private frame = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -199,6 +219,7 @@ export class MotionTracker {
     this.ended = [];
     this.pending = [];
     this.recent = [];
+    this.known = [];
   }
 
   /**
@@ -236,7 +257,11 @@ export class MotionTracker {
     const name = transition ? (event as TransitionEvent).propertyName : (event as AnimationEvent).animationName;
     const pseudo = (event as AnimationEvent).pseudoElement ?? "";
     if (begins) {
-      if (this.runs.length >= MAX_RUNS) return;
+      if (this.runs.length >= MAX_RUNS) {
+        // Past the follow limit: the next discovery finds it if it loops.
+        this.rediscover();
+        return;
+      }
       const run: Run = {
         el,
         transition,
@@ -256,7 +281,8 @@ export class MotionTracker {
         area: 0,
         longFrames: 0,
         maxBlocking: 0,
-        looked: false,
+        nextLook: 0,
+        lookEvery: 0,
         framesLooked: 0,
       };
       this.runs.push(run);
@@ -339,10 +365,17 @@ export class MotionTracker {
       run.resolved = true;
       this.evaluate(run, null);
       if (run.endedAt !== null) this.finish(run);
-      else if (run.infinite && this.runs.filter((r) => r.infinite).length > MAX_LOOPS)
+      else if (run.infinite && this.runs.filter((r) => r.infinite).length > MAX_LOOPS) {
         this.runs.splice(this.runs.indexOf(run), 1);
-      else if (this.sweeps)
-        this.schedule(run.start + (run.infinite ? this.deps.options.offscreenLoopMs + 1 : this.deps.options.stuckAnimationMs));
+        this.adopt(run);
+      }
+      else if (this.sweeps) {
+        if (run.infinite) {
+          run.lookEvery = this.deps.options.offscreenLoopMs;
+          run.nextLook = run.start + run.lookEvery + 1;
+        }
+        this.schedule(run.infinite ? run.nextLook : run.start + this.deps.options.stuckAnimationMs);
+      }
     }
   }
 
@@ -374,6 +407,28 @@ export class MotionTracker {
 
   // ---- Sweep -------------------------------------------------------------
 
+  /** An infinite run past the follow limit becomes a known loop, so no discovery is needed for it. */
+  private adopt(run: Run): void {
+    if (!run.anim || this.loops.has(run.anim)) return;
+    const loop = this.loopOf(run.anim);
+    this.loops.set(run.anim, loop);
+    if (!loop || this.known.length >= MAX_KNOWN) return;
+    loop.nextLook = run.start + loop.lookEvery + 1;
+    this.known.push({ anim: run.anim, loop });
+    this.schedule(loop.nextLook);
+  }
+
+  /** Discover again within a loop window (an animation started that no run follows). */
+  private rediscover(): void {
+    if (!this.on("offscreen_loop")) return;
+    const at = performance.now() + this.deps.options.offscreenLoopMs;
+    if (this.discoverAt > at) {
+      this.discoverAt = at;
+      this.discoverEvery = 0;
+    }
+    this.schedule(this.discoverAt);
+  }
+
   private schedule(at: number): void {
     if (!this.active || !this.sweeps) return;
     const when = Math.max(at, performance.now() + 0);
@@ -394,13 +449,17 @@ export class MotionTracker {
   private sweep(): void {
     if (!this.active) return;
     const now = performance.now();
-    const { stuckAnimationMs, offscreenLoopMs } = this.deps.options;
+    const { stuckAnimationMs } = this.deps.options;
+    const route = this.deps.route();
+    const lookForLoops = this.on("offscreen_loop") && (this.perCheck.get("offscreen_loop") ?? 0) < MAX_PER_CHECK;
     let budget = MAX_LOOKS;
     let next = Infinity;
     let loops = false;
-    let unlooked = false;
+    const later = (at: number) => {
+      next = Math.min(next, at);
+    };
     for (const run of [...this.runs]) {
-      if (!run.resolved) continue;
+      if (!run.resolved || !run.ref) continue;
       // Removed with its element (no cancel event reaches the document) or finished unseen.
       const state = run.anim?.playState;
       if (!run.el.isConnected || state === "finished" || state === "idle") {
@@ -411,78 +470,115 @@ export class MotionTracker {
       const jank = run.longFrames > run.framesLooked;
       if (run.infinite) {
         loops = true;
-        const due = elapsed > offscreenLoopMs && !run.looked;
-        if (elapsed <= offscreenLoopMs) next = Math.min(next, run.start + offscreenLoopMs + 1);
-        if (!due && !jank) continue;
+        const due = lookForLoops && now >= run.nextLook && !this.done(run.ref.stable_id, "offscreen_loop", route);
+        if (!due && !jank) {
+          if (lookForLoops && run.nextLook > now) later(run.nextLook);
+          continue;
+        }
         if (budget <= 0) {
-          unlooked = true;
+          later(now + 5 * MIN_SWEEP_MS);
           continue;
         }
         budget--;
-        if (due) run.looked = true;
         run.framesLooked = run.longFrames;
         this.evaluate(run, this.look(run), now);
+        if (due) {
+          run.lookEvery = this.backoff(run.lookEvery);
+          run.nextLook = now + run.lookEvery;
+          later(run.nextLook);
+        }
       } else if (elapsed >= stuckAnimationMs || jank) {
         let look: Look | null = null;
         if (jank && budget > 0) {
           budget--;
           run.framesLooked = run.longFrames;
           look = this.look(run);
-        } else if (jank) unlooked = true;
+        }
         this.evaluate(run, look, now);
         // Past its deadline a run has been judged: stop following it, so a run
         // that never ends (or stays paused) does not hold a place for good.
         if (elapsed >= stuckAnimationMs && !(jank && !look)) this.runs.splice(this.runs.indexOf(run), 1);
-        else if (elapsed < stuckAnimationMs) next = Math.min(next, run.start + stuckAnimationMs);
-        else next = Math.min(next, now + MIN_SWEEP_MS);
-      } else next = Math.min(next, run.start + stuckAnimationMs);
+        else if (elapsed < stuckAnimationMs) later(run.start + stuckAnimationMs);
+        else later(now + MIN_SWEEP_MS);
+      } else later(run.start + stuckAnimationMs);
     }
-    if (this.on("offscreen_loop")) {
-      const untracked = this.sweepUntracked(now, budget);
-      loops ||= untracked !== "none";
-      unlooked ||= untracked === "more";
+    if (lookForLoops) {
+      loops = this.sweepUntracked(now, budget, route, later) || loops;
+      // While something loops, discovery stays scheduled (sweepUntracked spaces it out).
+      if (loops || this.known.length) later(Math.max(now + MIN_SWEEP_MS, this.discoverAt));
     }
-    // Every loop has been looked at in this round: the next round looks again.
-    if (!unlooked) for (const run of this.runs) run.looked = false;
-    // A loop may hide later: look again one loop window on, but only while
-    // something loops. A page with no animation schedules nothing. Loops left
-    // over by the look budget are looked at soon after.
-    if (loops && this.on("offscreen_loop"))
-      next = Math.min(next, now + (unlooked ? 5 * MIN_SWEEP_MS : Math.max(MIN_SWEEP_MS, offscreenLoopMs)));
+    // A page with no animation schedules nothing.
     if (Number.isFinite(next)) this.schedule(Math.max(next, now + MIN_SWEEP_MS));
   }
 
   /**
-   * Infinite animations no followed run covers (started before the SDK, by the
-   * Web Animations API, or past the follow limit). "more": some were left for
-   * the next sweep by the look budget.
+   * Infinite animations no followed run covers: started before the SDK, by the
+   * Web Animations API, or past the follow limit. `document.getAnimations()`
+   * costs time in proportion to every animation on the page, so it runs only
+   * to discover loops (a loop window after start or after a new one appeared,
+   * then less and less often); looks visit the known loops that are due.
    */
-  private sweepUntracked(now: number, budget: number): "none" | "done" | "more" {
-    if (typeof document.getAnimations !== "function" || (this.perCheck.get("offscreen_loop") ?? 0) >= MAX_PER_CHECK)
-      return "none";
-    const tracked = new Set(this.runs.map((run) => run.anim));
-    const route = this.deps.route();
-    let loops = false;
-    for (const anim of document.getAnimations()) {
-      if (tracked.has(anim) || anim.playState !== "running" || this.adopted.has(anim)) continue;
-      const effect = anim.effect as KeyframeEffect | null;
-      const el = effect?.target;
-      if (!effect || !(el instanceof Element) || !this.deps.root.contains(el)) continue;
-      if (effect.getComputedTiming().iterations !== Infinity) continue;
-      loops = true;
+  private sweepUntracked(
+    now: number,
+    budget: number,
+    route: string | null,
+    later: (at: number) => void,
+  ): boolean {
+    const { offscreenLoopMs } = this.deps.options;
+    if (now >= this.discoverAt && typeof document.getAnimations === "function") {
+      const tracked = new Set(this.runs.map((run) => run.anim));
+      let fresh = false;
+      for (const anim of document.getAnimations()) {
+        if (tracked.has(anim) || this.loops.has(anim)) continue;
+        fresh = true;
+        const loop = this.loopOf(anim);
+        this.loops.set(anim, loop);
+        if (loop && this.known.length < MAX_KNOWN) this.known.push({ anim, loop });
+      }
+      this.discoverEvery = fresh || !this.discoverEvery ? offscreenLoopMs : this.backoff(this.discoverEvery);
+      this.discoverAt = now + this.discoverEvery;
+    }
+    for (let i = this.known.length - 1; i >= 0; i--) {
+      const { anim, loop } = this.known[i];
+      if (now < loop.nextLook) {
+        later(loop.nextLook);
+        continue;
+      }
+      const state = anim.playState;
+      if (state === "idle" || state === "finished" || !loop.el.isConnected) {
+        this.known.splice(i, 1);
+        continue;
+      }
       const current = Number(anim.currentTime);
-      if (!Number.isFinite(current) || current <= this.deps.options.offscreenLoopMs) continue;
-      if (this.done(this.stableId(el), "offscreen_loop", route) || el.closest("[data-interactions-exclude]")) continue;
-      if (budget <= 0) return "more";
+      if (state !== "running" || !Number.isFinite(current)) {
+        loop.nextLook = now + loop.lookEvery;
+        later(loop.nextLook);
+        continue;
+      }
+      if (current <= offscreenLoopMs) {
+        loop.nextLook = now + offscreenLoopMs - current + 1;
+        later(loop.nextLook);
+        continue;
+      }
+      if (this.done(loop.stable, "offscreen_loop", route)) {
+        this.known.splice(i, 1);
+        continue;
+      }
+      if (budget <= 0) {
+        loop.nextLook = now + 5 * MIN_SWEEP_MS;
+        later(loop.nextLook);
+        continue;
+      }
       budget--;
-      this.adopted.add(anim);
-      const props = Object.keys(effect.getKeyframes()[0] ?? {}).filter((key) => !KEYFRAME_META.has(key)).map(kebab);
-      const box = el.getBoundingClientRect();
+      loop.nextLook = now + loop.lookEvery;
+      loop.lookEvery = this.backoff(loop.lookEvery);
+      later(loop.nextLook);
+      const box = loop.el.getBoundingClientRect();
       const run: Run = {
-        el,
+        el: loop.el,
         transition: false,
         name: "",
-        pseudo: effect.pseudoElement ?? "",
+        pseudo: (anim.effect as KeyframeEffect | null)?.pseudoElement ?? "",
         start: now - current,
         endedAt: null,
         anim,
@@ -491,20 +587,44 @@ export class MotionTracker {
         infinite: true,
         layout: 0,
         motion: 0,
-        opacity: props.includes("opacity"),
+        opacity: loop.opacity,
         reduced: false,
-        ref: this.elementRef(el, box),
+        ref: this.elementRef(loop.el, box),
         area: Math.round(Math.max(0, box.width) * Math.max(0, box.height)),
         longFrames: 0,
         maxBlocking: 0,
-        looked: true,
+        nextLook: 0,
+        lookEvery: 0,
         framesLooked: 0,
       };
       this.evaluate(run, this.look(run), now, ["offscreen_loop"]);
     }
-    // Every loop has been looked at in this round: the next round looks again.
-    this.adopted = new WeakSet();
-    return loops ? "done" : "none";
+    return this.known.length > 0;
+  }
+
+  /** What does not change about an infinite animation, read once; null when it is not one to follow. */
+  private loopOf(anim: Animation): Loop | null {
+    const effect = anim.effect as KeyframeEffect | null;
+    const el = effect?.target;
+    if (
+      !effect ||
+      !(el instanceof Element) ||
+      !this.deps.root.contains(el) ||
+      effect.getComputedTiming().iterations !== Infinity ||
+      el.closest("[data-interactions-exclude]")
+    )
+      return null;
+    return {
+      el,
+      stable: this.stableId(el),
+      opacity: effect.getKeyframes().some((frame) => "opacity" in frame),
+      nextLook: 0,
+      lookEvery: this.deps.options.offscreenLoopMs,
+    };
+  }
+
+  private backoff(every: number): number {
+    return Math.min(every * 2, this.deps.options.offscreenLoopMs * MAX_BACKOFF);
   }
 
   // ---- Measuring and reporting -----------------------------------------------

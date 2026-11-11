@@ -219,8 +219,10 @@ async function idleRun(throttle, sdk) {
   };
 }
 
-// 7. A thousand infinite CSS spinners (half inside an aria-hidden subtree) for
-// 5 s, with and without the SDK: main-thread busy time and what the SDK sent.
+// 7. A thousand infinite CSS spinners (half inside an aria-hidden subtree), with
+// and without the SDK: main-thread busy time in the 5 s while the SDK finds
+// and looks at the loops, then in a later 5 s once it has settled, and what
+// the SDK sent.
 const SPINNERS = arg("spinners", 1000);
 function spinnerBody(count) {
   const one = (i) => `<i data-testid="spin-${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + ((i / 26) | 0) % 26)}" class="spin"></i>`;
@@ -235,6 +237,10 @@ async function spinnerRun(throttle, sdk) {
   await browser.startTracing(page, { categories: ["disabled-by-default-devtools.timeline", "devtools.timeline"] });
   await page.evaluate(() => new Promise((done) => setTimeout(done, 5000)));
   const tasks = mainThreadTasks(await browser.stopTracing());
+  await page.evaluate(() => new Promise((done) => setTimeout(done, 5000)));
+  await browser.startTracing(page, { categories: ["disabled-by-default-devtools.timeline", "devtools.timeline"] });
+  await page.evaluate(() => new Promise((done) => setTimeout(done, 5000)));
+  const settled = mainThreadTasks(await browser.stopTracing());
   const sent = sdk
     ? await page.evaluate(async () => {
         await window.handle.flush();
@@ -244,7 +250,7 @@ async function spinnerRun(throttle, sdk) {
       })
     : null;
   await close();
-  return { busyMs: tasks.reduce((a, b) => a + b, 0), longestTask: Math.max(...tasks), sent };
+  return { busyMs: tasks.reduce((a, b) => a + b, 0), longestTask: Math.max(...tasks), settledMs: settled.reduce((a, b) => a + b, 0), sent };
 }
 
 browser = await chromium.launch();
@@ -276,7 +282,8 @@ for (const throttle of THROTTLES) {
     const runs = [];
     for (let i = 0; i < Math.min(RUNS, 3); i++) runs.push(await spinnerRun(throttle, sdk));
     results.spinners[`${throttle}x/${sdk ? "sdk" : "none"}`] = {
-      busyMs: median(runs.map((x) => x.busyMs)), longestTask: median(runs.map((x) => x.longestTask)), sent: runs[0].sent,
+      busyMs: median(runs.map((x) => x.busyMs)), longestTask: median(runs.map((x) => x.longestTask)),
+      settledMs: median(runs.map((x) => x.settledMs)), sent: runs[0].sent,
     };
   }
   console.error(`clicks/idle/spinners ${throttle}x`, results.clicks, results.idle, results.spinners);
@@ -299,11 +306,11 @@ for (const throttle of SNAPSHOTS_ONLY ? [] : THROTTLES) {
   const [c0, c1, i0, i1] = [results.clicks[`${throttle}x/none`], results.clicks[`${throttle}x/sdk`], results.idle[`${throttle}x/none`], results.idle[`${throttle}x/sdk`]];
   out.push(`| ${throttle}x | ${r(c0.median, 3)} / ${r(c0.p95, 3)} ms | ${r(c1.median, 3)} / ${r(c1.p95, 3)} ms | ${r(i0.busyMs, 1)} / ${r(i1.busyMs, 1)} ms | ${r(i1.longestTask, 1)} ms | ${i1.longTasks} | ${i1.timersScheduled} | ${i1.liveMutationObservers} |`);
 }
-out.push("", `| CPU | ${SPINNERS} spinners, 5 s main-thread busy, no SDK / SDK | Longest task, SDK | Events sent | Findings sent |`);
-out.push("| --- | --- | --- | --- | --- |");
+out.push("", `| CPU | ${SPINNERS} spinners, first 5 s main-thread busy, no SDK / SDK | Longest task, SDK | 5 s from 10 s on, no SDK / SDK | Events sent | Findings sent |`);
+out.push("| --- | --- | --- | --- | --- | --- |");
 for (const throttle of THROTTLES) {
   const [s0, s1] = [results.spinners[`${throttle}x/none`], results.spinners[`${throttle}x/sdk`]];
-  out.push(`| ${throttle}x | ${r(s0.busyMs, 1)} / ${r(s1.busyMs, 1)} ms | ${r(s1.longestTask, 1)} ms | ${s1.sent?.events} | ${s1.sent?.findings} (${(s1.sent?.checks ?? []).join(", ")}) |`);
+  out.push(`| ${throttle}x | ${r(s0.busyMs, 1)} / ${r(s1.busyMs, 1)} ms | ${r(s1.longestTask, 1)} ms | ${r(s0.settledMs, 1)} / ${r(s1.settledMs, 1)} ms | ${s1.sent?.events} | ${s1.sent?.findings} (${(s1.sent?.checks ?? []).join(", ")}) |`);
 }
 console.log(out.join("\n"));
 console.log("\n```json\n" + JSON.stringify(results, null, 2) + "\n```");
