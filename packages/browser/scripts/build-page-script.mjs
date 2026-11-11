@@ -16,7 +16,7 @@ const code = buildSync({
   write: false,
 }).outputFiles[0].text;
 const literal = JSON.stringify(code);
-const doc = "/** Defines globalThis.__codepressInteractions.walk(options) in a page; resolves with a snapshot body. */\n";
+const doc = "/** Defines globalThis.__codepressInteractions in a page: walk(options) resolves with a snapshot body; sweep(setup) starts a hover and focus sweep. */\n";
 mkdirSync(dist, { recursive: true });
 writeFileSync(resolve(dist, "page-script.js"), `${doc}export const PAGE_SCRIPT = ${literal};\n`);
 writeFileSync(resolve(dist, "page-script.cjs"), `"use strict";\n${doc}exports.PAGE_SCRIPT = ${literal};\n`);

@@ -112,3 +112,58 @@ export function unnamedControl(ctx: Context): void {
     });
   }
 }
+
+/** One control hovered with the mouse and then given keyboard focus, as a sweep observed it. */
+export interface HoverFocusObservation {
+  /** The control's identifier (test ID or tag path), as a click's `control_id`. */
+  control_id: string;
+  route_template: string | null;
+  viewport_width: number;
+  viewport_height: number;
+  /** The screen while hovered. */
+  snapshot_sha256: string | null;
+  /** Resting the mouse on the control opened an overlay (a tooltip, menu, popover or other positioned layer with content). */
+  hover_overlay: boolean;
+  /** Keyboard focus on the same control opened one. */
+  focus_overlay: boolean;
+  /** Keyboard focus reached the control at all; null when not tried. */
+  focus_reached: boolean | null;
+}
+
+/**
+ * `a11y.hover_only_content`: hovering a control opened an overlay and keyboard
+ * focus on the same control did not, so keyboard users never see that content
+ * (WCAG 1.4.13, 2.1.1). One finding, or none.
+ */
+export function hoverOnlyFindings(observation: HoverFocusObservation, options: DetectOptions = {}): Finding[] {
+  const resolved = resolveOptions(options);
+  if (!resolved.checks.has("hover_only_content")) return [];
+  if (observation.hover_overlay !== true || observation.focus_overlay !== false) return [];
+  const controlId = observation.control_id;
+  if (typeof controlId !== "string" || !controlId) return [];
+  const width = Number.isFinite(observation.viewport_width) ? Math.max(0, Math.round(observation.viewport_width)) : 0;
+  const height = Number.isFinite(observation.viewport_height) ? Math.max(0, Math.round(observation.viewport_height)) : 0;
+  const route = observation.route_template ?? null;
+  return [
+    {
+      type: "hover_only_content",
+      check: CHECK_IDS.hover_only_content,
+      check_version: CHECK_VERSION,
+      fingerprint: fingerprint("hover_only_content", route, viewportBand(width, resolved.viewportBands), [controlId]),
+      route_template: route,
+      snapshot_sha256: observation.snapshot_sha256 ?? null,
+      viewport_width: width,
+      viewport_height: height,
+      subject: null,
+      other: null,
+      control_id: controlId,
+      interaction_id: null,
+      evidence: boundEvidence({
+        hover_overlay: true,
+        focus_overlay: false,
+        focus_reached: typeof observation.focus_reached === "boolean" ? observation.focus_reached : null,
+        structural_id: controlId.includes("/"),
+      }),
+    },
+  ];
+}

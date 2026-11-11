@@ -216,7 +216,8 @@ test("keyboard focus that opens a tooltip records a focus hover with a focus sna
 });
 
 test("a testId hook that replaces the element under a resting pointer is called once, not in a loop", async ({ page }) => {
-  await openPage(page, `<button data-testid="save-button" style="width:200px;height:60px">Go</button>`);
+  // Away from the origin: Chromium on Linux can start the mouse at (0, 0) and report it over an element there.
+  await openPage(page, `<button data-testid="save-button" style="width:200px;height:60px;margin:100px">Go</button>`);
   await page.evaluate(() => {
     const w = window as any;
     w.calls = 0;
@@ -234,7 +235,7 @@ test("a testId hook that replaces the element under a resting pointer is called 
     });
   });
   await page.mouse.move(400, 400);
-  await page.mouse.move(50, 30);
+  await page.mouse.move(150, 130);
   await page.waitForTimeout(400);
   expect(await page.evaluate(() => (window as any).calls)).toBeLessThanOrEqual(2);
 });

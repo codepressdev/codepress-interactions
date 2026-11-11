@@ -4,11 +4,12 @@
  * when they find anything.
  */
 import { createHash } from "node:crypto";
-import { expect, type Page } from "@playwright/test";
+import { expect, type ElementHandle, type JSHandle, type Page } from "@playwright/test";
 import {
   checkEvents,
   checkSnapshot,
   formatFinding,
+  hoverOnlyFindings,
   sortFindings,
   type DetectOptions,
   type Finding,
@@ -18,7 +19,7 @@ import {
 import { PAGE_SCRIPT } from "@codepress/interactions-browser/page-script";
 
 export type { CheckName, DetectOptions, Evidence, Finding, SnapshotBody, TimelineEvent } from "@codepress/interactions-browser/detect";
-export { formatFinding, sortFindings } from "@codepress/interactions-browser/detect";
+export { formatFinding, hoverOnlyFindings, sortFindings } from "@codepress/interactions-browser/detect";
 
 export interface CaptureOptions {
   /** CSS selector of the subtree to walk. Default: the whole document. */
@@ -59,6 +60,7 @@ export interface FindIssuesOptions extends CaptureOptions, DetectOptions {
 
 interface Walker {
   walk(options: unknown): Promise<SnapshotBody>;
+  hook(source: string): (value: string, element: Element) => string | null;
 }
 
 /** Walks the page with the SDK's snapshot walker in one pass (never torn). */
@@ -80,20 +82,7 @@ export async function captureSnapshot(page: Page, options: CaptureOptions = {}):
     // Indirect eval runs the bundled walker in the page's global scope.
     if (!scope.__codepressInteractions) (0, eval)(script);
     if (testId === null) return scope.__codepressInteractions!.walk(options);
-    let filter: unknown;
-    try {
-      filter = (0, eval)(`(${testId})`);
-    } catch {
-      try {
-        // Method shorthand (`testId(value) { … }`) is not an expression on its own.
-        filter = Object.values((0, eval)(`({${testId}})`) as object)[0];
-      } catch {
-        // Bound and native functions have no source to rebuild.
-      }
-    }
-    if (typeof filter !== "function")
-      throw new Error("testId must be a self-contained function: bound and native functions cannot run in the page");
-    const hook = filter as (value: string, element: Element) => string | null;
+    const hook = scope.__codepressInteractions!.hook(testId);
     // The SDK drops an ID when a hook throws. Here a name missing from the page
     // is a broken test setup, and dropping every ID would hide it.
     let missing: string | null = null;
@@ -116,12 +105,19 @@ export async function captureSnapshot(page: Page, options: CaptureOptions = {}):
   return { body, sha256 };
 }
 
-/** Runs the checks on the page as it is now, sorted with blocked controls first. */
-export async function findIssues(page: Page, options: FindIssuesOptions = {}): Promise<Finding[]> {
-  const { body, sha256 } = await captureSnapshot(page, options);
+/** The checks on the page as it is now, unsorted and unfiltered, with the snapshot they ran on. */
+async function inspect(page: Page, options: FindIssuesOptions): Promise<{ findings: Finding[]; snapshot: Snapshot }> {
+  const snapshot = await captureSnapshot(page, options);
+  const { body, sha256 } = snapshot;
   const findings = checkSnapshot(body, { ...options, sha256 });
   if (options.events?.length)
     findings.push(...checkEvents(options.events, { ...options, snapshots: [{ body, sha256 }] }));
+  return { findings, snapshot };
+}
+
+/** Runs the checks on the page as it is now, sorted with blocked controls first. */
+export async function findIssues(page: Page, options: FindIssuesOptions = {}): Promise<Finding[]> {
+  const { findings } = await inspect(page, options);
   const skip = new Set(options.ignoreFingerprints ?? []);
   return sortFindings(findings.filter((finding) => !skip.has(finding.fingerprint)));
 }
@@ -131,7 +127,10 @@ export async function findIssues(page: Page, options: FindIssuesOptions = {}): P
  * (check, elements, evidence, fingerprint) so the failure reads on its own.
  */
 export async function expectNoFindings(page: Page, options: FindIssuesOptions = {}): Promise<void> {
-  const findings = await findIssues(page, options);
+  expectNone(page, await findIssues(page, options), "UI finding");
+}
+
+function expectNone(page: Page, findings: readonly Finding[], noun: string, suffix = ""): void {
   const lines = findings.map(formatFinding);
   const where = (() => {
     try {
@@ -142,7 +141,188 @@ export async function expectNoFindings(page: Page, options: FindIssuesOptions = 
   })();
   expect(
     lines,
-    `${findings.length} UI finding${findings.length === 1 ? "" : "s"} on ${where}` +
+    `${findings.length} ${noun}${findings.length === 1 ? "" : "s"} on ${where}${suffix}` +
       (findings.length ? ". Pass a fingerprint in ignoreFingerprints to accept one." : ""),
   ).toEqual([]);
+}
+
+// ---- Hover and focus sweep ------------------------------------------------
+
+export interface SweepOptions extends FindIssuesOptions {
+  /** Most controls visited, in document order; the rest are counted in `skipped`. Default 200. */
+  maxControls?: number;
+  /** Rest the mouse on each control. Default true. */
+  hover?: boolean;
+  /** Give each control keyboard focus. Default true. */
+  focus?: boolean;
+  /** Quiet time after the last change before a hover or focus counts as settled, in ms. Default 200. */
+  settleMs?: number;
+}
+
+export interface SweepResult {
+  /** Every finding seen at rest, while hovering and while focusing, once per fingerprint, sorted. */
+  findings: Finding[];
+  /** Controls visited. */
+  controls: number;
+  /** Controls not visited: past `maxControls`, or gone from the page (or no longer hoverable) when their turn came. */
+  skipped: number;
+}
+
+interface SweepStep {
+  reached: boolean;
+  overlay: boolean;
+  settled: boolean;
+}
+
+/** The in-page sweep (`Sweep` in the browser package's sweep.ts). */
+interface PageSweep {
+  controls(max: number): { elements: Element[]; total: number };
+  controlId(element: Element): string;
+  arm(control: Element): void;
+  hovered(control: Element): Promise<SweepStep>;
+  focus(control: Element): Promise<SweepStep>;
+  blur(control: Element): void;
+  quiet(): Promise<void>;
+  away(): { x: number; y: number };
+  stop(): void;
+}
+
+interface SweepScope {
+  __codepressInteractions?: Walker & { sweep(setup: unknown): PageSweep };
+}
+
+/**
+ * Hovers and then keyboard-focuses every visible control on the page (in
+ * document order, up to `maxControls`), running the checks on the page at rest
+ * and after each hover and focus settles. A control whose hover opened an
+ * overlay that its keyboard focus did not adds an `a11y.hover_only_content`
+ * finding. Escape is pressed between controls to close what they opened.
+ */
+export async function sweepInteractions(page: Page, options: SweepOptions = {}): Promise<SweepResult> {
+  const hover = options.hover !== false;
+  const focus = options.focus !== false;
+  const max = Number.isFinite(options.maxControls) ? Math.max(0, Math.floor(options.maxControls!)) : 200;
+  const settleMs = Number.isFinite(options.settleMs) ? Math.min(Math.max(1, Math.floor(options.settleMs!)), 60000) : 200;
+  const found = new Map<string, Finding>();
+  const add = (findings: readonly Finding[]) => {
+    for (const finding of findings) if (!found.has(finding.fingerprint)) found.set(finding.fingerprint, finding);
+  };
+
+  // The page at rest; this also injects the page script.
+  add((await inspect(page, options)).findings);
+  const sweep = (await page.evaluateHandle(
+    ({ setup, testId }) => {
+      const api = (globalThis as unknown as SweepScope).__codepressInteractions!;
+      return api.sweep({ ...setup, testId: testId === null ? undefined : api.hook(testId) });
+    },
+    {
+      setup: { root: options.root, ignore: options.ignore, settleMs },
+      testId: typeof options.testId === "function" ? String(options.testId) : null,
+    },
+  )) as JSHandle<PageSweep>;
+
+  let visited = 0;
+  let total = 0;
+  try {
+    const list = await sweep.evaluateHandle((s, limit) => s.controls(limit), hover || focus ? max : 0);
+    total = await list.evaluate((l) => l.total);
+    const elements = await (await list.evaluateHandle((l) => l.elements)).getProperties();
+    await list.dispose();
+    const rest = async () => {
+      const { x, y } = await sweep.evaluate((s) => s.away());
+      await page.mouse.move(x, y);
+    };
+    /** Rests the mouse on `control` from a quiet page away from it, and waits for the hover to settle. */
+    const hoverStep = async (control: ElementHandle<Element>): Promise<SweepStep> => {
+      await rest();
+      await control.scrollIntoViewIfNeeded({ timeout: 2000 });
+      await sweep.evaluate(async (s, element) => {
+        await s.quiet();
+        s.arm(element);
+      }, control);
+      await control.hover({ force: true, timeout: 2000 });
+      return sweep.evaluate((s, element) => s.hovered(element), control);
+    };
+    for (const property of elements.values()) {
+      const control = property.asElement() as ElementHandle<Element> | null;
+      if (!control) continue;
+      try {
+        if (!(await control.evaluate((element) => element.isConnected))) continue;
+        let hovered: SweepStep | null = null;
+        let hoverSnapshot: Snapshot | null = null;
+        if (hover) {
+          hovered = await hoverStep(control);
+          const result = await inspect(page, options);
+          add(result.findings);
+          hoverSnapshot = result.snapshot;
+        }
+        let focused: SweepStep | null = null;
+        if (focus) {
+          await rest();
+          await page.keyboard.press("Escape");
+          await sweep.evaluate(async (s, element) => {
+            await s.quiet();
+            s.arm(element);
+          }, control);
+          focused = await sweep.evaluate((s, element) => s.focus(element), control);
+          add((await inspect(page, options)).findings);
+          await page.keyboard.press("Escape");
+          await sweep.evaluate((s, element) => s.blur(element), control);
+        }
+        // Hover-only only when a second hover opens it again: a layer that appeared once (a
+        // first-visit hint, a timer) is not what this control shows.
+        if (
+          hovered?.reached &&
+          hovered.overlay &&
+          focused &&
+          !focused.overlay &&
+          hoverSnapshot &&
+          (await hoverStep(control)).overlay
+        ) {
+          const { body, sha256 } = hoverSnapshot;
+          add(
+            hoverOnlyFindings(
+              {
+                control_id: await sweep.evaluate((s, element) => s.controlId(element), control),
+                route_template: body.route_template,
+                viewport_width: body.viewport.width,
+                viewport_height: body.viewport.height,
+                snapshot_sha256: sha256,
+                hover_overlay: true,
+                focus_overlay: false,
+                focus_reached: focused.reached,
+              },
+              options,
+            ),
+          );
+        }
+        visited++;
+      } catch (error) {
+        // The page navigated or closed: nothing more can be swept.
+        if (page.isClosed() || /Execution context was destroyed|Target .*closed/i.test(String(error))) break;
+        // Otherwise the control went away or could not be hovered: it counts as skipped.
+      } finally {
+        await control.dispose().catch(() => {});
+      }
+    }
+    if (hover) await rest().catch(() => {});
+  } finally {
+    await sweep.evaluate((s) => s.stop()).catch(() => {});
+    await sweep.dispose().catch(() => {});
+  }
+  const skip = new Set(options.ignoreFingerprints ?? []);
+  return {
+    findings: sortFindings([...found.values()].filter((finding) => !skip.has(finding.fingerprint))),
+    controls: visited,
+    skipped: Math.max(0, total - visited),
+  };
+}
+
+/**
+ * Fails the test when `sweepInteractions` finds anything, one line per
+ * finding as `expectNoFindings` writes them.
+ */
+export async function expectNoSweepFindings(page: Page, options: SweepOptions = {}): Promise<void> {
+  const { findings, controls } = await sweepInteractions(page, options);
+  expectNone(page, findings, "UI finding", ` after hovering and focusing ${controls} control${controls === 1 ? "" : "s"}`);
 }
