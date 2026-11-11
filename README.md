@@ -65,20 +65,22 @@ A finding has the check (`layout.overlap`, `layout.spill`, `layout.clipped_text`
 
 ## Overhead
 
-Measured with `pnpm --filter @codepress/interactions-browser bench` ([script](packages/browser/scripts/overhead.mjs)) in headless Chromium at 1280×720 on an Apple M1 Max, median of 5 runs, without throttling and with 4× CPU throttling (closer to a mid-range phone). Your numbers will differ; the script prints its machine with them.
+Measured with `pnpm --filter @codepress/interactions-browser bench` ([script](packages/browser/scripts/overhead.mjs)) in headless Chromium at 1280×720 on an Apple M1 Max, median of 21 runs (5 for clicks and idle), without throttling and with 4× CPU throttling (closer to a mid-range phone). Your numbers will differ; the script prints its machine with them.
 
-- **Bundle:** 28.7 KB gzip (81.5 KB minified) for the main entry, checks included. The checks alone (`/detect`) are 10.3 KB gzip.
+- **Bundle:** 32.1 KB gzip (91.3 KB minified) for the main entry, checks included. The checks alone (`/detect`) are 10.6 KB gzip.
 - **Idle page:** about 0.6 ms of extra main-thread time per 5 seconds, no long tasks, one flush timer and one structural MutationObserver.
 - **Clicks:** the SDK's click listener adds 0.09 ms (0.47 ms at 4×, p95 1.1 ms) before your handler runs.
 - **Snapshots:** the walk runs in idle-time slices of about 6–8 ms (`maxSliceMs`) and never caused a long task:
 
   | Elements | Walk CPU (1× / 4×) | Longest task (1× / 4×) | Checks, one idle task (1× / 4×) | Body (gzip) |
   | --- | --- | --- | --- | --- |
-  | ~500 | 5.9 / 25 ms | 8.6 / 14 ms | 4.7 / 16 ms | 32 KB (3.7 KB) |
-  | ~2,000 | 16 / 80 ms | 7.2 / 18 ms | 8.1 / 34 ms | 134 KB (12 KB) |
-  | ~5,000 | 34 / 171 ms | 8.3 / 30 ms | 14 / 50 ms | 343 KB (27 KB) |
+  | ~500 | 7.1 / 37 ms | 7.4 / 12 ms | 4.6 / 17 ms | 32 KB (3.6 KB) |
+  | ~2,000 | 19 / 86 ms | 7.4 / 14 ms | 7.9 / 31 ms | 133 KB (11 KB) |
+  | ~5,000 | 40 / 183 ms | 7.5 / 18 ms | 14 / 47 ms | 340 KB (26 KB) |
 
   Two steps are not sliced. Finishing a walk (serializing and hashing the body) is one task, the "longest task" column. The checks run over each new snapshot in one idle callback: on a 5,000-element page at 4× that is up to 50 ms, at the long-task threshold, and on a slower phone it would be a long task. They run only after a new snapshot, and only when the browser reports idle time; `findings: false` turns them off in the browser (the same checks still run in tests and in Node). A snapshot is taken only when a screen changes, and a body already sent in the session is not sent again.
+
+  The walk includes the [accessibility measurements](packages/browser/README.md#what-the-measurements-cost) (text contrast and accessible names), 12–20% of its CPU on this page. `maxContrastElements` lowers that, and leaving `low_contrast` and `unnamed_control` out of `detect.checks` removes it.
 
 ## Wire protocol
 

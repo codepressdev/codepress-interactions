@@ -180,6 +180,21 @@ Contrast and accessible names are worked out in the page during the snapshot wal
 
 **Accessible names.** For each visible, enabled control with a role (the controls the `interactive` flag covers) that is not `aria-hidden`, the name is empty when none of these give text: `aria-labelledby` targets, `aria-label`, an associated `<label>` (excluding the control itself), `alt` of an image input, `title`, `placeholder`, the control's own content (for roles named from content: buttons, links, checkboxes, radios, switches, tabs, menu items, options and tree items; content counts text, descendants' `aria-label`, `alt` and SVG `<title>`, skipping `aria-hidden` subtrees) or the `value` of a button-type input. A submit or reset input without a `value` has the browser's default name. Text hidden with `display: none` inside a control is still counted as content. This is not a full accessible name computation or a replacement for an accessibility audit.
 
+#### What the measurements cost
+
+Both measurements run inside the snapshot walk. Contrast reads three computed styles that the walk otherwise does not (`background-color` and `background-image` up the ancestors, `color` on text), and that is most of its cost. Walk CPU on the [overhead bench](https://github.com/quantfive/codepress-interactions/blob/main/packages/browser/scripts/overhead.mjs) page (Apple M1 Max, headless Chromium, one cold walk per fresh page, median / p95 of 21 runs), before these measurements and with them at the defaults:
+
+| Elements | 1×, before | 1×, with | 4×, before | 4×, with |
+| --- | --- | --- | --- | --- |
+| ~500 | 6.1 / 6.4 ms | 7.1 / 7.7 ms (+16%) | 31 / 36 ms | 37 / 42 ms (+20%) |
+| ~2,000 | 16.4 / 17.2 ms | 19.1 / 19.8 ms (+16%) | 76 / 83 ms | 86 / 96 ms (+14%) |
+| ~5,000 | 34.9 / 35.8 ms | 39.5 / 42.2 ms (+13%) | 164 / 170 ms | 183 / 188 ms (+12%) |
+
+The walk stays sliced (`maxSliceMs`), so this is more slices, not longer tasks. To spend less:
+
+- `maxContrastElements` (default 2000) caps the text elements whose contrast is worked out per snapshot, in page order; text past the cap is not measured. A lower cap makes long pages cheaper; `0` turns contrast off.
+- Leaving `low_contrast` out of `detect.checks` turns contrast off in the walk too (no colour reads, and the body has no `contrast` table); leaving `unnamed_control` out skips the name lookups (no `unnamed_controls` table). With both left out the walk is back to its cost before them: 16.5 / 17.6 ms at 1× and 77 / 87 ms at 4× for ~2,000 elements.
+
 ### Measured behaviors worth knowing
 
 These are reported as measured. Each finding carries the evidence that says what it is, so a reader can decide without guessing.
