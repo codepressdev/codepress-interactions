@@ -10,7 +10,7 @@ Nothing here needs a CodePress account or service. Apache-2.0.
 | --- | --- |
 | [`@codepress/interactions-browser`](packages/browser/README.md) | The SDK: capture, snapshots, checks, sinks. Framework independent, ESM and CommonJS, TypeScript types. |
 | [`@codepress/interactions-react`](packages/react/README.md) | An optional `useInteractions` hook that owns the SDK's lifecycle in a component. |
-| [`@codepress/interactions-playwright`](packages/playwright/README.md) | `findIssues` and `expectNoFindings` for Playwright tests. |
+| [`@codepress/interactions-playwright`](packages/playwright/README.md) | `findIssues` and `expectNoFindings` for Playwright tests, and `sweepInteractions`, which hovers and keyboard-focuses every control first. |
 
 ## Install
 

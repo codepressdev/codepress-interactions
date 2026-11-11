@@ -12,6 +12,7 @@ import {
   sha256HexSync,
   findingTier,
   focusIndicatorFindings,
+  hoverOnlyFindings,
   involvesControl,
   sortFindings,
   toFindingData,
@@ -806,5 +807,63 @@ describe("a11y.no_focus_indicator", () => {
   it("a tag-path control is marked structural", () => {
     const [finding] = focusIndicatorFindings({ ...observation, control_id: "main/form/button" });
     expect(finding.evidence.structural_id).toBe(true);
+  });
+});
+
+describe("a11y.hover_only_content", () => {
+  const observation = {
+    control_id: "help",
+    route_template: "/settings",
+    viewport_width: 1280,
+    viewport_height: 800,
+    snapshot_sha256: "a".repeat(64),
+    hover_overlay: true,
+    focus_overlay: false,
+    focus_reached: true,
+  };
+
+  it("hover opened an overlay and focus did not: one finding keyed by the control", () => {
+    const [finding, ...rest] = hoverOnlyFindings(observation);
+    expect(rest).toEqual([]);
+    expect(finding).toMatchObject({
+      type: "hover_only_content",
+      check: "a11y.hover_only_content",
+      check_version: 1,
+      control_id: "help",
+      subject: null,
+      other: null,
+      interaction_id: null,
+      route_template: "/settings",
+      snapshot_sha256: "a".repeat(64),
+      viewport_width: 1280,
+      viewport_height: 800,
+      evidence: { hover_overlay: true, focus_overlay: false, focus_reached: true, structural_id: false },
+    });
+    expect(finding.fingerprint).toBe(fingerprint("hover_only_content", "/settings", "1024-1439", ["help"]));
+    expect(involvesControl(finding)).toBe(true);
+    expect(formatFinding(finding)).toBe(
+      `a11y.hover_only_content help on /settings @1280x800: hover_overlay focus_reached [${finding.fingerprint}]`,
+    );
+    expect(Object.keys(finding.evidence).length).toBeLessThanOrEqual(32);
+    for (const value of Object.values(finding.evidence)) expect(["boolean", "number"]).toContain(typeof value);
+  });
+
+  it("focus that never reached the control is recorded, and an unknown reach is null", () => {
+    expect(hoverOnlyFindings({ ...observation, focus_reached: false })[0].evidence.focus_reached).toBe(false);
+    expect(hoverOnlyFindings({ ...observation, focus_reached: null })[0].evidence.focus_reached).toBeNull();
+  });
+
+  it("nothing when focus opened it too, hover opened nothing, the check is off, or there is no control", () => {
+    expect(hoverOnlyFindings({ ...observation, focus_overlay: true })).toEqual([]);
+    expect(hoverOnlyFindings({ ...observation, hover_overlay: false })).toEqual([]);
+    expect(hoverOnlyFindings(observation, { checks: ["no_focus_indicator"] })).toEqual([]);
+    expect(hoverOnlyFindings(observation, { checks: ["hover_only_content"] })).toHaveLength(1);
+    expect(hoverOnlyFindings({ ...observation, control_id: "" })).toEqual([]);
+  });
+
+  it("a tag-path control is marked structural, and the viewport band keys the fingerprint", () => {
+    const [finding] = hoverOnlyFindings({ ...observation, control_id: "main/nav/button", viewport_width: 390 });
+    expect(finding.evidence.structural_id).toBe(true);
+    expect(finding.fingerprint).toBe(fingerprint("hover_only_content", "/settings", "0-479", ["main/nav/button"]));
   });
 });

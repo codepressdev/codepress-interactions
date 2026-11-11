@@ -36,6 +36,7 @@ import type {
 import {
   VERSION,
   clampMs,
+  controlIdOf,
   defaultRouteTemplate,
   elementTestId,
   routeSegmentSet,
@@ -520,18 +521,7 @@ export class Runtime {
 
   /** A control's identifier: its safe test ID, else a non-unique path of at most five tags. */
   private controlId(target: Element): string {
-    const explicit = elementTestId(target, this.testIdFilter);
-    if (explicit) return explicit;
-    // Non-unique structural hint: at most five ancestor tags, never a sibling scan.
-    const path: string[] = [];
-    for (
-      let node: Element | null = target;
-      node && node !== this.root && path.length < 5;
-      node = node.parentElement
-    )
-      path.unshift(node.tagName.toLowerCase());
-    // The protocol bounds control_id at 128; the end of the path is nearest the control.
-    return path.join("/").slice(-128);
+    return controlIdOf(target, this.root, this.testIdFilter);
   }
 
   private onRoute(): void {

@@ -15,6 +15,9 @@ The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 - `perf.summary` gains `hovers_silent` and `focus_silent`, the hovers and keyboard focuses that changed nothing. Each is absent when zero, so with `hovers: false` a summary is the same as before.
 - Check `a11y.no_focus_indicator`: keyboard focus with no visible change to the outline, box shadow, border or background of the element or its two nearest ancestors. `focusIndicatorFindings` in `@codepress/interactions-browser/detect`.
 - Protocol v2, additive: the `ui.hover.settled` event, the two trigger values, the two summary fields and the check name. A receiver must accept them before an SDK that sends them is deployed.
+- `@codepress/interactions-playwright`: `sweepInteractions(page, options?)` hovers and then keyboard-focuses every visible control (up to `maxControls`, 200), runs the checks at rest and after each hover and focus settles, and returns `{ findings, controls, skipped }` with each finding once per fingerprint; `expectNoSweepFindings` fails a test on any of them. New options `maxControls`, `hover`, `focus` and `settleMs`. See [Hover and focus sweep](packages/playwright/README.md#hover-and-focus-sweep).
+- Check `a11y.hover_only_content`, from a sweep only: hover opened an overlay and keyboard focus on the same control did not. `hoverOnlyFindings` in `@codepress/interactions-browser/detect`. The browser SDK never sends it, so receivers need no change; the check name fits the existing `check` pattern.
+- The page script (`@codepress/interactions-browser/page-script`) gains `hook(source)` and `sweep(setup)`, the in-page half of a sweep, built on the hover and focus follow-through.
 
 ### Changed
 

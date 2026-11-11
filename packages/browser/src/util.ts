@@ -59,6 +59,18 @@ export function elementTestId(element: Element, filter?: TestIdFilter): string |
   return filteredId(element, "data-interaction-id", use) ?? filteredId(element, "data-testid", use);
 }
 
+/** A control's identifier: its safe test ID, else a non-unique path of at most five tags up to `root`. */
+export function controlIdOf(target: Element, root: Element, filter?: TestIdFilter): string {
+  const explicit = elementTestId(target, filter);
+  if (explicit) return explicit;
+  // Non-unique structural hint: at most five ancestor tags, never a sibling scan.
+  const path: string[] = [];
+  for (let node: Element | null = target; node && node !== root && path.length < 5; node = node.parentElement)
+    path.unshift(node.tagName.toLowerCase());
+  // The protocol bounds control_id at 128; the end of the path is nearest the control.
+  return path.join("/").slice(-128);
+}
+
 export const safeLabel = (value: unknown, max = 64): string | undefined =>
   typeof value === "string" &&
   value.length <= max &&
