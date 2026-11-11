@@ -164,6 +164,31 @@ test("a testId hook replaces the default filter", async ({ page }) => {
   }
 });
 
+test("data-layout-allow-overlap values never reach a batch or snapshot", async ({ page }) => {
+  // Names that match an element (whose own test ID the filter drops), match nothing, or are free text.
+  await openPage(
+    page,
+    `<div style="position:relative;margin:40px;height:120px">
+       <div data-testid="${S}-avatar" style="position:absolute;left:0;top:0;width:48px;height:48px;background:#ccc"></div>
+       <span data-testid="badge" data-layout-allow-overlap="${S}-avatar ${S}-missing" style="position:absolute;left:38px;top:-6px;width:16px;height:16px;background:red"></span>
+       <div data-layout-allow-overlap="${S} free text ${S}@example.com" style="position:absolute;left:0;top:60px;width:48px;height:48px;background:#ccc"></div>
+       <button data-testid="edit" data-layout-allow-overlap="*" style="position:absolute;left:30px;top:60px;width:60px;height:30px">Edit</button>
+     </div>`,
+  );
+  await init(page);
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await page.click('[data-testid="edit"]');
+  await page.waitForTimeout(200);
+  const out = await output(page);
+  expectValid(out);
+  expect(out.snapshots.length).toBeGreaterThanOrEqual(1);
+  // The marker did take effect: the badge's pair was resolved in the page.
+  expect(out.snapshots[0].body.allow_overlap.element.length).toBeGreaterThan(0);
+  const everything = [...out.serialized, ...out.snapshots.map((s) => s.serialized)].join("\n");
+  for (const value of [S.toLowerCase(), "missing", "free text", "example.com", "data-layout-allow-overlap"])
+    expect(everything.toLowerCase(), value).not.toContain(value);
+});
+
 for (const [name, write] of [
   ["a constant aria-busy", 'element.setAttribute("aria-busy", "false")'],
   ["a toggled aria-busy", 'element.setAttribute("aria-busy", String(element.getAttribute("aria-busy") !== "true"))'],

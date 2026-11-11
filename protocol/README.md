@@ -33,6 +33,7 @@ A body is columnar: every array under `elements` has `element_count` entries, an
 - `elements`: parent row, tag, role, test ID, `x`/`y`/`width`/`height` in viewport CSS pixels, z-index, CSS position, a flags bitmask (see `legend.flags`) and the length of the element's own text.
 - `text_boxes`: for elements with direct text, the box the rendered text occupies and its line count. Geometry only.
 - `hit_tests`: for visible controls, how many of five points (center and four inset points) land on something else, which ones, and the row on top.
+- `allow_overlap` (optional, since 1.2.0): overlaps the page allows with `data-layout-allow-overlap`, as row pairs (`other` is `-1` for any element). The marker's value is resolved in the page and never recorded. Absent when no element carries the marker.
 - `truncated`: the walk stopped at its element or byte limit. `torn`: the page changed between slices of the walk, so positions may not belong to one moment.
 
 The body's `sha256` is over its exact uncompressed UTF-8 bytes. A body is identified by that hash and sent once per page session.

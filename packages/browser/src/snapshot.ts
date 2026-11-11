@@ -54,6 +54,13 @@ export interface WalkResult {
   sliceElements: number[];
 }
 
+/** The marker that allows a designed overlap with named partners (test IDs) or `*`. */
+export const ALLOW_OVERLAP_ATTRIBUTE = "data-layout-allow-overlap";
+/** Most partner names read from one marker; longer lists are cut. */
+const ALLOW_TOKENS = 32;
+/** Most allowed pairs recorded in one body. */
+export const MAX_ALLOWED_PAIRS = 10_000;
+
 /** Clock checks happen once per batch of this many elements. */
 export const CHECK_EVERY = 8;
 
@@ -201,6 +208,8 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
   };
   const hitTargets: (Element | null)[] = [];
   const indexOf = new Map<Element, number>();
+  /** Rows carrying the allow marker and the names it lists; never leaves the page. */
+  const marked: { row: number; names: string[] }[] = [];
 
   let torn = false;
   const markTorn = () => {
@@ -303,6 +312,11 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     if (typeof ShadowRoot === "function" && element.getRootNode() instanceof ShadowRoot)
       flags |= FLAGS.in_shadow;
     if (popoverOpen) flags |= FLAGS.popover_open;
+    const names = ignored ? null : allowNames(element);
+    if (names) {
+      flags |= FLAGS.allow_overlap;
+      marked.push({ row: index, names });
+    }
     // Hidden from assistive technology, itself or through an ancestor.
     if (element.closest('[aria-hidden="true"]')) flags |= FLAGS.aria_hidden;
     if (
@@ -412,6 +426,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     const target = hitTargets[i];
     hits.top[i] = target ? resolveIndex(target, indexOf, hits.element[i], elements.parent) : -1;
   }
+  const allowed = marked.length ? resolveAllowed(marked, indexOf, elements) : null;
 
   const body: SnapshotBody = {
     schema_version: 2,
@@ -429,6 +444,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     elements,
     text_boxes: text,
     hit_tests: hits,
+    ...(allowed ? { allow_overlap: allowed } : {}),
   };
   return {
     body,
@@ -603,6 +619,106 @@ function resolveIndex(
   return -1;
 }
 
+/** The partner names in an element's allow marker, or null when it has none. */
+function allowNames(element: Element): string[] | null {
+  const value = element.getAttribute(ALLOW_OVERLAP_ATTRIBUTE);
+  if (!value) return null;
+  const names = value.trim().split(/\s+/).filter(Boolean).slice(0, ALLOW_TOKENS);
+  return names.length ? names : null;
+}
+
+/**
+ * Resolves allow markers to row pairs in the page: a name matches a recorded
+ * element whose `data-interaction-id` or `data-testid` is that value (before
+ * the test ID filter), and `*` matches any element. Only pairs whose boxes
+ * intersect can overlap, so only those are kept. The names themselves never
+ * reach the body.
+ */
+function resolveAllowed(
+  marked: { row: number; names: string[] }[],
+  indexOf: Map<Element, number>,
+  elements: SnapshotBody["elements"],
+): NonNullable<SnapshotBody["allow_overlap"]> {
+  const result: NonNullable<SnapshotBody["allow_overlap"]> = { element: [], other: [] };
+  const wanted = new Set<string>();
+  for (const { names } of marked) for (const name of names) if (name !== "*") wanted.add(name);
+  // Elements bearing each wanted name, bucketed by grid cell so a marker is only
+  // compared with the elements near it (a list of 1,000 badges naming 1,000
+  // "avatar"s is not a million comparisons).
+  const byName = new Map<string, PlaceIndex>();
+  if (wanted.size)
+    for (const [element, row] of indexOf)
+      for (const name of new Set([element.getAttribute("data-interaction-id"), element.getAttribute("data-testid")])) {
+        if (!name || !wanted.has(name)) continue;
+        let index = byName.get(name);
+        if (!index) byName.set(name, (index = { cells: new Map(), wide: [], all: [] }));
+        index.all.push(row);
+        const span = cellsOf(elements, row);
+        if (!span) index.wide.push(row);
+        else for (const key of span) {
+          const list = index.cells.get(key);
+          if (list) list.push(row);
+          else index.cells.set(key, [row]);
+        }
+      }
+  const crosses = (a: number, b: number) =>
+    Math.min(elements.x[a] + elements.width[a], elements.x[b] + elements.width[b]) > Math.max(elements.x[a], elements.x[b]) &&
+    Math.min(elements.y[a] + elements.height[a], elements.y[b] + elements.height[b]) > Math.max(elements.y[a], elements.y[b]);
+  for (const { row, names } of marked) {
+    if (result.element.length >= MAX_ALLOWED_PAIRS) break;
+    if (names.includes("*")) {
+      result.element.push(row);
+      result.other.push(-1);
+      continue;
+    }
+    const span = cellsOf(elements, row);
+    const partners = new Set<number>();
+    const consider = (other: number) => {
+      if (other !== row && crosses(row, other)) partners.add(other);
+    };
+    for (const name of names) {
+      const index = byName.get(name);
+      if (!index) continue;
+      if (!span) index.all.forEach(consider);
+      else {
+        index.wide.forEach(consider);
+        for (const key of span) index.cells.get(key)?.forEach(consider);
+      }
+    }
+    for (const other of [...partners].sort((a, b) => a - b)) {
+      if (result.element.length >= MAX_ALLOWED_PAIRS) break;
+      result.element.push(row);
+      result.other.push(other);
+    }
+  }
+  return result;
+}
+
+interface PlaceIndex {
+  /** Rows by grid cell. */
+  cells: Map<string, number[]>;
+  /** Rows spanning too many cells to bucket: compared with every marker. */
+  wide: number[];
+  all: number[];
+}
+
+/** Side of a grid cell, in CSS pixels. */
+const CELL_PX = 256;
+/** A box spanning more cells than this is not bucketed. */
+const MAX_CELLS = 64;
+
+/** Grid cells a row's box touches, or null when it spans too many to list. */
+function cellsOf(elements: SnapshotBody["elements"], row: number): string[] | null {
+  const x0 = Math.floor(elements.x[row] / CELL_PX);
+  const y0 = Math.floor(elements.y[row] / CELL_PX);
+  const x1 = Math.floor((elements.x[row] + elements.width[row]) / CELL_PX);
+  const y1 = Math.floor((elements.y[row] + elements.height[row]) / CELL_PX);
+  if (!(x1 >= x0 && y1 >= y0) || (x1 - x0 + 1) * (y1 - y0 + 1) > MAX_CELLS) return null;
+  const keys: string[] = [];
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) keys.push(`${x},${y}`);
+  return keys;
+}
+
 /**
  * Serializes the body, dropping trailing elements (DFS preorder keeps parents
  * valid) until it fits in `maxBytes`.
@@ -638,6 +754,8 @@ function truncateBody(body: SnapshotBody, keep: number): SnapshotBody {
   const hits = body.hit_tests;
   const hitKeep = hits.element.findIndex((index) => index >= keep);
   const h = hitKeep === -1 ? hits.element.length : hitKeep;
+  const allow = body.allow_overlap;
+  const allowKeep = allow ? allow.element.map((row, i) => row < keep && allow.other[i] < keep) : [];
   return {
     ...body,
     element_count: keep,
@@ -658,6 +776,14 @@ function truncateBody(body: SnapshotBody, keep: number): SnapshotBody {
       points: hits.points.slice(0, h),
       top: hits.top.slice(0, h).map((index) => (index >= keep ? -1 : index)),
     },
+    ...(allow
+      ? {
+          allow_overlap: {
+            element: allow.element.filter((_, i) => allowKeep[i]),
+            other: allow.other.filter((_, i) => allowKeep[i]),
+          },
+        }
+      : {}),
   };
 }
 

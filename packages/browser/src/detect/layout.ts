@@ -259,6 +259,11 @@ function overlapFinding(ctx: Context, a: number, b: number): void {
   const hit = intersect(vs, vo);
   const hitArea = area(hit);
   const covered = subject === a ? aUnder : bUnder;
+  // A designed overlap allowed in the markup, unless the cover sits on the
+  // middle of a control: then the control is unusable and the marker gives way.
+  const allowed = view.allowsOverlap(subject, other);
+  const overridden = allowed && view.has(subject, FLAGS.interactive) && covered.center;
+  if (allowed && !overridden) return;
   const subjectText = textOverlap(view, subject, vo, options.overlapMinPx);
   const otherText = textOverlap(view, other, vs, options.overlapMinPx);
   const common = view.common(subject, other);
@@ -292,6 +297,7 @@ function overlapFinding(ctx: Context, a: number, b: number): void {
     subject_depth_to_common: common.a,
     other_depth_to_common: common.b,
     common_parent_positioned: common.row >= 0 ? view.position[common.row] !== 0 : null,
+    allow_marker_overridden: overridden,
   });
 }
 

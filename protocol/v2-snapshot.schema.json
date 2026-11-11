@@ -219,6 +219,9 @@
             },
             "aria_hidden": {
               "const": 8192
+            },
+            "allow_overlap": {
+              "const": 16384
             }
           }
         },
@@ -413,9 +416,9 @@
           "items": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 16383
+            "maximum": 32767
           },
-          "description": "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. aria_hidden: the element or an ancestor has aria-hidden=true. Bodies before 0.3.0 never set the last four."
+          "description": "Bitmask, see legend.flags. visible: has area, visibility visible, effective opacity > 0.01 and not entirely clipped by an ancestor. interactive: focusable/clickable control that is not disabled. clipped: box extends past an ancestor's overflow clip. scrollable: overflow auto/scroll with overflowing content. overlay: position fixed, absolute with z-index > 0, an open dialog/popover, or role dialog/alertdialog/tooltip/menu/listbox. ignored: matched ignoreSelector, [data-layout-ignore] or [data-interactions-exclude]; recorded as one box, never descended. pointer_events_none: computed pointer-events none. opaque: canvas, iframe, embed, object or video; recorded as one box, never descended. clips_content: the element clips its own overflow. in_shadow: the element's own tree is an open shadow root (slotted light-DOM content is not). popover_open: matches :popover-open. ellipsis: computed text-overflow ellipsis or a line clamp. broken_image: an img that finished loading with no image data. aria_hidden: the element or an ancestor has aria-hidden=true. allow_overlap: the element carries a data-layout-allow-overlap marker (added in 1.2.0; see allow_overlap). Bodies before 0.3.0 never set popover_open, ellipsis, broken_image or aria_hidden."
         },
         "text_length": {
           "type": "array",
@@ -561,6 +564,37 @@
         }
       },
       "description": "For visible interactive elements only: elementFromPoint at the center and at the four points 25% in from each edge. elementFromPoint is never called for other elements."
+    },
+    "allow_overlap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "element",
+        "other"
+      ],
+      "properties": {
+        "element": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49999
+          },
+          "description": "Row of an element flagged allow_overlap."
+        },
+        "other": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "type": "integer",
+            "minimum": -1,
+            "maximum": 49999
+          },
+          "description": "Row of the element its marker allows, or -1 when the marker allows any element (*)."
+        }
+      },
+      "description": "Added in 1.2.0. Overlaps allowed in the markup with data-layout-allow-overlap, resolved in the page to row pairs: a marker's space-separated names match elements whose data-interaction-id or data-testid has that value (before the test ID filter), and * matches any element. Only pairs whose boxes intersect are listed, at most 10000. The marker's value is never recorded. Absent when no recorded element carries the marker."
     }
   }
 }

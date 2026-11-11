@@ -4,6 +4,13 @@ The three npm packages (`@codepress/interactions-browser`, `@codepress/interacti
 
 The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 
+## Unreleased
+
+### Added
+
+- `data-layout-allow-overlap` allows a designed overlap (an avatar's status badge, a sticky header over content) for one pair and the overlap check only, in the component's markup. Put it on either element; its value is the other element's test IDs (space-separated, matched before the test ID filter) or `*`. It gives way when the cover sits on the centre of a control: then the overlap is reported with `allow_marker_overridden: true`. See [Allowing a designed overlap](packages/browser/README.md#allowing-a-designed-overlap). The Playwright helpers honour it with no change.
+- Protocol v2, additive: snapshot flag `allow_overlap` (16384) on elements carrying the marker, an optional `allow_overlap` table of allowed row pairs in the snapshot body (the marker's value is never recorded), and the overlap evidence key `allow_marker_overridden`.
+
 ## 1.1.0
 
 `@codepress/interactions-browser` and `@codepress/interactions-playwright`. `@codepress/interactions-react` has no code change and stays at 1.0.0; its `^1.0.0` dependency picks up this browser release, and its `InteractionOptions` type gains `testId`.
