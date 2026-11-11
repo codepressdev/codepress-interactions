@@ -87,7 +87,7 @@ Options are those of `findIssues`, plus:
 | `focus` | `true` | give each control keyboard focus |
 | `settleMs` | 200 | quiet time after the last change before a hover or focus counts as settled. Raise it for tooltips and menus that open after a longer delay: one that opens late on hover is missed, and one that opens late only on focus makes the control look hover-only |
 
-`a11y.hover_only_content` needs both `hover` and `focus`. `controls` is the number visited; `skipped` counts controls past `maxControls` and those that left the page, or could not be hovered, when their turn came. Each control takes about four `settleMs` plus three snapshot walks, about a second at the default, so raise the test's timeout for a long page or lower `maxControls`.
+`a11y.hover_only_content` needs both `hover` and `focus`. `controls` is the number visited; `skipped` counts controls past `maxControls` and those that left the page, or could not be hovered, when their turn came. With `hover: false` and `focus: false` the sweep visits no control: it runs the checks on the page at rest only, `controls` is 0 and `skipped` counts every control. Each control takes about four `settleMs` plus three snapshot walks, about a second at the default, so raise the test's timeout for a long page or lower `maxControls`.
 
 ## License
 

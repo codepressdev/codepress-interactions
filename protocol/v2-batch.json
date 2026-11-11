@@ -1,7 +1,7 @@
 {
   "batch_id": "00000000-0000-4000-8000-000000000001",
   "schema_version": 2,
-  "sdk_version": "1.1.0",
+  "sdk_version": "1.2.0",
   "release": "shop-web@1.8.0",
   "events": [
     {
@@ -25,9 +25,9 @@
         "truncated": false,
         "torn": false,
         "bytes": 1917,
-        "walk_ms": 1.9,
+        "walk_ms": 4.4,
         "slices": 1,
-        "max_slice_ms": 1.9,
+        "max_slice_ms": 4.4,
         "theme": "light"
       }
     },
@@ -43,7 +43,7 @@
       "type": "perf.summary",
       "attribution": "unknown",
       "data": {
-        "window_ms": 6.5,
+        "window_ms": 14.6,
         "layout_shift_score": 0,
         "layout_shift_count": 0,
         "long_task_count": 0,
@@ -101,7 +101,7 @@
       "data": {
         "outcome": "completed",
         "phase": "http_200",
-        "duration_ms": 13.4,
+        "duration_ms": 7.1,
         "trace_id": "4bf92f3577b34da6",
         "request_label": "cart.post"
       }
@@ -121,8 +121,8 @@
         "action": "click",
         "control_id": "checkout-save",
         "route_template": "/checkout/:id",
-        "first_feedback_ms": 14.2,
-        "settle_ms": 14.2,
+        "first_feedback_ms": 9,
+        "settle_ms": 9,
         "mutation_count": 1,
         "request_count": 1,
         "request_failed_count": 0,
@@ -165,9 +165,9 @@
         "truncated": false,
         "torn": false,
         "bytes": 1983,
-        "walk_ms": 0.4,
+        "walk_ms": 0.3,
         "slices": 1,
-        "max_slice_ms": 0.4,
+        "max_slice_ms": 0.3,
         "theme": "light"
       }
     },
@@ -186,8 +186,8 @@
         "kind": "pointer",
         "control_id": "checkout-pay",
         "route_template": "/checkout/:id",
-        "dwell_ms": 151.6,
-        "settle_ms": 0.5,
+        "dwell_ms": 150.8,
+        "settle_ms": 6.1,
         "transition_started": false,
         "animation_started": false,
         "nodes_added": true,
@@ -211,7 +211,7 @@
       "type": "perf.summary",
       "attribution": "unknown",
       "data": {
-        "window_ms": 1285.3,
+        "window_ms": 1182.4,
         "layout_shift_score": 0,
         "layout_shift_count": 0,
         "long_task_count": 0,
