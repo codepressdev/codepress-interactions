@@ -261,3 +261,41 @@ test("hovers: false turns hover and focus following off", async ({ page }) => {
   }
   expect(await page.evaluate(() => (window as any).handle.getDiagnostics().adapters)).not.toContain("hover_effects");
 });
+
+test("a hover that starts a CSS transition or animation is seen through the motion listeners, with one set of them on the page", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+       .fade { width: 160px; height: 40px; background: #eee; transition: background-color 300ms; }
+       .fade:hover { background: #333; }
+       @keyframes pulse { to { transform: scale(1.1); } }
+       .pulse { width: 160px; height: 40px; margin-top: 40px; background: #ddd; }
+       .pulse:hover { animation: pulse 300ms 1; }
+     </style>
+     <button data-testid="fade" class="fade">Fade</button>
+     <button data-testid="pulse" class="pulse">Pulse</button>
+     <div style="height:200px"></div>`,
+    {
+      initScript: `
+        window.__motionListeners = 0;
+        const add = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function (type, ...rest) {
+          if (this === document && (type === "transitionrun" || type === "animationstart")) window.__motionListeners++;
+          return add.call(this, type, ...rest);
+        };`,
+    },
+  );
+  await init(page, { hoverSettleMs: 200 });
+  expect(await page.evaluate(() => (window as any).__motionListeners)).toBe(2);
+  await page.mouse.move(5, 790);
+  await rest(page, "[data-testid=fade]", 200);
+  await page.mouse.move(5, 790);
+  await rest(page, "[data-testid=pulse]", 200);
+  await page.mouse.move(5, 790);
+  await expect.poll(async () => hovers(await output(page)).length).toBe(2);
+  const out = await output(page);
+  expectValid(out);
+  const [fade, pulse] = hovers(out).map((e) => e.data);
+  expect(fade).toMatchObject({ control_id: "fade", transition_started: true, animation_started: false });
+  expect(pulse).toMatchObject({ control_id: "pulse", animation_started: true });
+});

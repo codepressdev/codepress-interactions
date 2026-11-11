@@ -388,6 +388,7 @@ export class Runtime {
             : Promise.resolve(null),
         emit: (data: HoverSettledData) => this.record("ui.hover.settled", null, data),
         silent: (kind) => this.perf.silent(kind),
+        onMotion: (listener) => this.motion?.onStart(listener) ?? (() => {}),
         noFocusIndicator: (controlId, routeTemplate, wrappers) => {
           if (!this.findingsEnabled || !this.active) return;
           try {

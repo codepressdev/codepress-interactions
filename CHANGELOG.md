@@ -30,6 +30,7 @@ The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 
 ### Changed
 
+- Hover and focus follow-through reads animation and transition starts from the motion checks' listeners, so the page has one set of `animationstart` and `transitionrun` listeners. Hover events are unchanged.
 - Click follow-through runs on a follow-through observer shared with hovers and focus (the same mutation observer configuration, settle and timeout timers and dialog detection). Click events are unchanged.
 
 ## 1.1.0

@@ -119,6 +119,9 @@ export interface MotionDeps {
   emit(findings: Finding[]): void;
 }
 
+/** Told synchronously, in the event's dispatch, of every animation or transition start on an element. */
+export type MotionStartListener = (target: Element, kind: "transition" | "animation") => void;
+
 export interface RecentMotion {
   animations: number;
   transitions: number;
@@ -136,6 +139,7 @@ export class MotionTracker {
   private ended: Run[] = [];
   private pending: Run[] = [];
   private recent: { el: Element; transition: boolean; at: number }[] = [];
+  private startListeners = new Set<MotionStartListener>();
   /** Check, route and stable ID of every finding sent (at most MAX_PER_CHECK per check). */
   private reported = new Set<string>();
   private perCheck = new Map<CheckName, number>();
@@ -220,6 +224,17 @@ export class MotionTracker {
     this.pending = [];
     this.recent = [];
     this.known = [];
+    this.startListeners.clear();
+  }
+
+  /**
+   * Calls `listener` on every animation or transition start, from these
+   * listeners (so the page has one set of motion listeners). Returns the
+   * unsubscribe. Used by hover and focus follow-through.
+   */
+  onStart(listener: MotionStartListener): () => void {
+    this.startListeners.add(listener);
+    return () => this.startListeners.delete(listener);
   }
 
   /**
@@ -245,10 +260,18 @@ export class MotionTracker {
   private onEvent(event: Event): void {
     if (!this.active) return;
     const el = event.target;
-    if (!(el instanceof Element) || !this.deps.root.contains(el)) return;
+    if (!(el instanceof Element)) return;
     const transition = event.type.startsWith("transition");
-    const at = performance.now();
     const begins = event.type === "animationstart" || event.type === "transitionrun";
+    if (begins)
+      for (const listener of this.startListeners)
+        try {
+          listener(el, transition ? "transition" : "animation");
+        } catch {
+          /* One listener failing must not stop the others. */
+        }
+    if (!this.deps.root.contains(el)) return;
+    const at = performance.now();
     if (begins) {
       this.recent.push({ el, transition, at });
       if (this.recent.length > MAX_RECENT) this.recent.splice(0, this.recent.length - MAX_RECENT);
