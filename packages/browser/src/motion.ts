@@ -26,7 +26,7 @@ const MAX_RUNS = 256;
 /** Runs resolved per animation frame; the rest wait for the next frame. */
 const MAX_RESOLVE = 128;
 /** Visibility looks (layout reads) per sweep. */
-const MAX_LOOKS = 200;
+const MAX_LOOKS = 100;
 /** Sorting newly discovered animations stops after this long and continues in a later sweep. */
 const SORT_SLICE_MS = 4;
 /** A loop seen visible is looked at again after its interval doubles, up to this many loop windows. */
@@ -554,8 +554,10 @@ export class MotionTracker {
     later: (at: number) => void,
   ): boolean {
     const { offscreenLoopMs } = this.deps.options;
+    let discovered = false;
     if (now >= this.discoverAt && typeof document.getAnimations === "function") {
-      // `getAnimations()` brings style up to date, so sorting and looks in the same task cost little more.
+      discovered = true;
+      // `getAnimations()` brings style up to date, so sorting in the same task costs little more.
       const tracked = new Set(this.runs.map((run) => run.anim));
       let fresh = false;
       for (const anim of document.getAnimations()) {
@@ -567,14 +569,21 @@ export class MotionTracker {
       this.discoverEvery = fresh || !this.discoverEvery ? offscreenLoopMs : this.backoff(this.discoverEvery);
       this.discoverAt = now + this.discoverEvery;
     }
-    const sortUntil = performance.now() + SORT_SLICE_MS;
+    // The first animation's timing read brings style up to date; the slice starts after it.
+    let sortUntil = Infinity;
     while (this.unsorted.length && performance.now() < sortUntil) {
       const anim = this.unsorted.pop()!;
       const loop = this.loopOf(anim);
       this.loops.set(anim, loop);
       if (loop && this.known.length < MAX_KNOWN) this.known.push({ anim, loop });
+      if (sortUntil === Infinity) sortUntil = performance.now() + SORT_SLICE_MS;
     }
     if (this.unsorted.length) later(now + MIN_SWEEP_MS);
+    // Looks wait for the next sweep, so discovery, sorting and looks never add up in one task.
+    if (discovered) {
+      later(now + MIN_SWEEP_MS);
+      return this.known.length > 0 || this.unsorted.length > 0;
+    }
     for (let i = this.known.length - 1; i >= 0; i--) {
       const { anim, loop } = this.known[i];
       if (now < loop.nextLook) {

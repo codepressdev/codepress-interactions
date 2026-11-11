@@ -446,3 +446,25 @@ test("expectNoSweepFindings fails with one line per finding", async ({ page }) =
   const { findings } = await sweepInteractions(page);
   await expectNoSweepFindings(page, { ignoreFingerprints: findings.map((f) => f.fingerprint) });
 });
+
+test("sweep: a tooltip that fades in with a CSS transition on hover only is hover-only content; one that also fades in on focus is not", async ({ page }) => {
+  const FADE = `
+<style>
+  .tip-wrap { position: relative; display: inline-block; margin: 40px }
+  .tip { position: absolute; left: 0; top: 44px; width: 160px; padding: 4px; background: #222; color: #fff;
+         visibility: hidden; opacity: 0; transform: translateY(-6px); transition: opacity 400ms, transform 400ms, visibility 400ms }
+  .hover-only:hover + .tip, .both:hover + .tip, .both:focus-visible + .tip { visibility: visible; opacity: 1; transform: none }
+</style>
+<span class="tip-wrap"><button data-testid="fade-hover" class="hover-only">Hover</button><span class="tip">Opens the guide</span></span>
+<span class="tip-wrap"><button data-testid="fade-both" class="both">Both</button><span class="tip">Opens the guide</span></span>`;
+  await serve(page, FADE);
+  // The page counts the transitions it starts, so the test knows the hover and focus ran them.
+  await page.evaluate(() => {
+    (window as any).__runs = 0;
+    document.addEventListener("transitionrun", () => (window as any).__runs++, true);
+  });
+  const result = await sweepInteractions(page);
+  expect(await page.evaluate(() => (window as any).__runs)).toBeGreaterThan(0);
+  expect(result.controls).toBe(2);
+  expect(result.findings.filter((f) => f.check === "a11y.hover_only_content").map((f) => f.control_id)).toEqual(["fade-hover"]);
+});
