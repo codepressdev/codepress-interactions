@@ -291,15 +291,17 @@ export class Sweep {
       const all = top.getElementsByTagName("*");
       for (let i = 0; i < all.length && budget > 0; i++) visit(all[i]);
     };
-    subtree(owner);
+    // Most causal and cheapest first, so a large parent cannot use up the budget
+    // before a portalled overlay is reached.
     for (const element of referenced) subtree(element);
+    for (const element of this.added) if (element.isConnected) subtree(element);
     try {
       const overlays = this.root.querySelectorAll(OVERLAY_QUERY);
       for (let i = 0; i < overlays.length && budget > 0; i++) visit(overlays[i]);
     } catch {
       /* Selector unsupported. */
     }
-    for (const element of this.added) if (element.isConnected) subtree(element);
+    subtree(owner);
     return out;
   }
 

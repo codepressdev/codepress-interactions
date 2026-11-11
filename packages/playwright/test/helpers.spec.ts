@@ -362,6 +362,28 @@ test("sweep: a tooltip portaled to the body and referenced by aria-describedby c
   expect(findings.map((f) => [f.check, f.control_id])).toEqual([["a11y.hover_only_content", "share"]]);
 });
 
+test("sweep: a large parent does not use up the scan before a portaled, referenced tooltip is reached", async ({ page }) => {
+  await serve(
+    page,
+    `<div style="margin:200px 40px"><button data-testid="share" id="share" aria-describedby="share-tip">Share</button><div id="rows" hidden></div></div>
+<script>
+  // More descendants than the sweep inspects per state, all in the button's parent.
+  document.getElementById("rows").innerHTML = "<span></span>".repeat(2500);
+  const button = document.getElementById("share");
+  button.addEventListener("mouseenter", () => {
+    const tip = document.createElement("div");
+    tip.id = "share-tip";
+    tip.style.cssText = "position:absolute;left:600px;top:40px;width:120px;background:#333;color:#fff";
+    tip.textContent = "Copy a link";
+    document.body.append(tip);
+  });
+  button.addEventListener("mouseleave", () => document.getElementById("share-tip")?.remove());
+</script>`,
+  );
+  const { findings } = await sweepInteractions(page);
+  expect(findings.map((f) => [f.check, f.control_id])).toEqual([["a11y.hover_only_content", "share"]]);
+});
+
 test("sweep: a hover menu that spills out of its bar and off screen is found by the sweep, not at rest", async ({ page }) => {
   await serve(page, SPILLING_MENU);
   expect(await findIssues(page)).toEqual([]);
