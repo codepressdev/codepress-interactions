@@ -59,6 +59,19 @@ export interface InteractionOptions {
   clickSettleMs?: number;
   /** Longest a click is followed before it is reported `incomplete`. Default 10000 ms. */
   clickTimeoutMs?: number;
+  /**
+   * Follow hovers (mouse or pen) and keyboard focus like clicks, and check that
+   * keyboard focus is visible. Default true.
+   */
+  hovers?: boolean;
+  /** How long a mouse or pen pointer must rest on a control before its hover counts. Default 150 ms. */
+  hoverDwellMs?: number;
+  /** Quiet time after a hover's dwell (or a keyboard focus) and its last effect before it counts as settled. Default 600 ms. */
+  hoverSettleMs?: number;
+  /** At most one `ui.hover.settled` per control and route in this many ms. Default 30000. */
+  hoverRecordIntervalMs?: number;
+  /** At most this many `ui.hover.settled` events per minute per page. Default 30. */
+  maxHoverRecordsPerMinute?: number;
   /** Quiet time after the last resize before a snapshot. Default 500 ms. */
   resizeSettleMs?: number;
   /** Delay after the tab becomes visible again before a snapshot. Default 300 ms. */
@@ -144,6 +157,7 @@ export type EventType =
   | LegacyEventType
   | "ui.snapshot"
   | "ui.click.settled"
+  | "ui.hover.settled"
   | "ui.finding"
   | "perf.summary";
 
@@ -162,7 +176,7 @@ export type LegacyData = Partial<{
   target_key: number;
 }>;
 
-export type SnapshotTrigger = "route" | "click" | "resize" | "visible" | "manual";
+export type SnapshotTrigger = "route" | "click" | "resize" | "visible" | "manual" | "hover" | "focus";
 
 export interface SnapshotEventData {
   sha256: string;
@@ -219,6 +233,38 @@ export interface ClickSettledData {
   after_sha256: string | null;
 }
 
+/** How a hover was made: a resting mouse or pen pointer, or keyboard focus. */
+export type HoverKind = "pointer" | "focus";
+
+/** What followed a hover or keyboard focus (1.2.0). Sent only when at least one effect was seen. */
+export interface HoverSettledData {
+  kind: HoverKind;
+  control_id: string;
+  route_template: string | null;
+  /** How long the pointer rested before the hover counted; 0 for focus. */
+  dwell_ms: number;
+  /** Time from the pointer arriving (or focus) to the last observed effect. */
+  settle_ms: number;
+  /** A CSS transition ran on the control, around it, or in what appeared. */
+  transition_started: boolean;
+  /** A CSS animation started on the control, around it, or in what appeared. */
+  animation_started: boolean;
+  /** Elements were added anywhere in the observed root. */
+  nodes_added: boolean;
+  /** A dialog, tooltip, menu, listbox or popover appeared. */
+  overlay_opened: boolean;
+  /** An `aria-expanded` attribute changed. */
+  expanded_changed: boolean;
+  /** A class changed on the control, an ancestor, or what appeared. */
+  class_changed: boolean;
+  /** An inline style changed on the control, an ancestor, or what appeared. */
+  style_changed: boolean;
+  /** The snapshot taken because an overlay appeared (trigger `hover` or `focus`); null when none was taken. */
+  snapshot_sha256: string | null;
+  /** A React hover handler (onMouseEnter/Over, onPointerEnter/Over) on the control or up to 3 ancestors; null on non-React pages. */
+  has_hover_handler: boolean | null;
+}
+
 export interface PerfSummaryData {
   window_ms: number;
   layout_shift_score: number | null;
@@ -230,6 +276,10 @@ export interface PerfSummaryData {
   image_error_count: number | null;
   uncaught_error_count: number | null;
   unavailable: SignalName[];
+  /** Mouse or pen hovers that rested past the dwell and changed nothing observable (1.2.0). Absent when zero. */
+  hovers_silent?: number;
+  /** Keyboard focuses that changed nothing observable (1.2.0). Absent when zero. */
+  focus_silent?: number;
 }
 
 export interface EvidenceEvent {
@@ -243,7 +293,7 @@ export interface EvidenceEvent {
   occurred_at: string;
   type: EventType;
   attribution: "explicit" | "inferred" | "unknown";
-  data: LegacyData | SnapshotEventData | ClickSettledData | PerfSummaryData | FindingData;
+  data: LegacyData | SnapshotEventData | ClickSettledData | HoverSettledData | PerfSummaryData | FindingData;
 }
 
 export interface Batch {

@@ -16,6 +16,8 @@ export interface SignalCounters {
   eventTimingMaxMs: number;
   imageErrorCount: number;
   uncaughtErrorCount: number;
+  hoversSilent: number;
+  focusSilent: number;
 }
 
 export const emptyCounters = (): SignalCounters => ({
@@ -27,6 +29,8 @@ export const emptyCounters = (): SignalCounters => ({
   eventTimingMaxMs: 0,
   imageErrorCount: 0,
   uncaughtErrorCount: 0,
+  hoversSilent: 0,
+  focusSilent: 0,
 });
 
 const supported = (type: string): boolean =>
@@ -50,6 +54,11 @@ export class PerfSignals {
       image_error: typeof document !== "undefined",
       uncaught_error: typeof window !== "undefined",
     };
+  }
+
+  /** Counts a hover or keyboard focus that changed nothing observable. */
+  silent(kind: "pointer" | "focus"): void {
+    this.add(kind === "pointer" ? { hoversSilent: 1 } : { focusSilent: 1 });
   }
 
   /** Subscribes to increments (used by click follow-through). */
@@ -127,7 +136,7 @@ export class PerfSignals {
     const t = this.totals;
     const any =
       t.layoutShiftCount || t.longTaskCount || t.eventTimingCount ||
-      t.imageErrorCount || t.uncaughtErrorCount;
+      t.imageErrorCount || t.uncaughtErrorCount || t.hoversSilent || t.focusSilent;
     if (!any && !force) return null;
     const a = this.available;
     const at = now();
@@ -143,6 +152,9 @@ export class PerfSignals {
       uncaught_error_count: a.uncaught_error ? t.uncaughtErrorCount : null,
       unavailable: (Object.keys(a) as SignalName[]).filter((name) => !a[name]),
     };
+    // Absent when zero, so a page with hovers off (or none silent) sends the same summary as before 1.2.0.
+    if (t.hoversSilent) summary.hovers_silent = Math.min(1_000_000, t.hoversSilent);
+    if (t.focusSilent) summary.focus_silent = Math.min(1_000_000, t.focusSilent);
     this.totals = emptyCounters();
     this.windowStart = at;
     return summary;

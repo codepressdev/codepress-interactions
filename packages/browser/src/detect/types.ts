@@ -17,6 +17,7 @@ export const CHECK_NAMES = [
   "layout_shift",
   "slow_input",
   "broken_image",
+  "no_focus_indicator",
 ] as const;
 
 export type CheckName = (typeof CHECK_NAMES)[number];
@@ -38,6 +39,7 @@ export const CHECK_IDS: Record<CheckName, string> = {
   layout_shift: "stability.layout_shift",
   slow_input: "stability.slow_input",
   broken_image: "stability.broken_image",
+  no_focus_indicator: "a11y.no_focus_indicator",
 };
 
 /** Bumped when a check's meaning changes, so old and new findings are not mixed. */

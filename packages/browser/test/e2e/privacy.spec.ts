@@ -233,3 +233,55 @@ for (const [name, write] of [
     expect((result as [string, number])[1]).toBeLessThanOrEqual(10);
   });
 }
+
+test("tooltip text, class names and styles seen on hover and focus never reach the sink", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>.btn-${S}:hover { background: rgb(1, 2, 3); } .btn-${S}:focus-visible { outline: none; }</style>
+     <button id="tipped" class="btn-${S}" aria-describedby="tip-${S}" style="margin:40px">${S} help</button>
+     <button id="bare" class="btn-${S}" data-note="${S}">${S} bare</button>
+     <script>
+       const tipped = document.getElementById("tipped");
+       const show = () => {
+         const tip = document.createElement("div");
+         tip.id = "tip-${S}";
+         tip.className = "tip-${S}";
+         tip.setAttribute("role", "tooltip");
+         tip.setAttribute("aria-label", "${S} label");
+         tip.style.cssText = "position:absolute;left:10px;top:90px;font-family:${S}";
+         tip.textContent = "${S} tooltip text";
+         document.body.append(tip);
+         tipped.classList.add("open-${S}");
+         tipped.setAttribute("aria-expanded", "true");
+       };
+       tipped.addEventListener("mouseenter", show);
+       tipped.addEventListener("focus", show);
+       const hide = () => { document.getElementById("tip-${S}")?.remove(); tipped.classList.remove("open-${S}"); };
+       tipped.addEventListener("mouseleave", hide);
+       tipped.addEventListener("blur", hide);
+     </script>`,
+    {},
+    `/help/${S}`,
+  );
+  await init(page, { hoverSettleMs: 150 });
+  await page.mouse.move(5, 5);
+  await page.hover("#tipped");
+  await expect.poll(async () => events(await output(page)).filter((e) => e.type === "ui.hover.settled").length).toBe(1);
+  await page.mouse.move(5, 300);
+  await page.keyboard.press("Tab");
+  await expect.poll(async () => events(await output(page)).filter((e) => e.type === "ui.hover.settled").length).toBe(2);
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await page.waitForTimeout(300);
+  const out = await output(page);
+  expectValid(out);
+  const hovers = events(out).filter((e) => e.type === "ui.hover.settled");
+  expect(hovers.map((e) => e.data.kind)).toEqual(["pointer", "focus"]);
+  for (const hover of hovers)
+    expect(hover.data).toMatchObject({ overlay_opened: true, class_changed: true, expanded_changed: true });
+  expect(out.snapshots.length).toBeGreaterThanOrEqual(1);
+  expect(events(out).some((e) => e.type === "ui.finding" && e.data.check === "a11y.no_focus_indicator")).toBe(true);
+  const everything = [...out.serialized, ...out.snapshots.map((s) => s.serialized)].join("\n");
+  expect(everything.toLowerCase()).not.toContain(S.toLowerCase());
+  for (const text of ["tooltip text", "rgb(1, 2, 3)", "font-family", "outline"]) expect(everything).not.toContain(text);
+});

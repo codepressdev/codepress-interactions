@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { checkEvents, checkSnapshot, findingTier, fingerprint, type Finding } from "../../src/detect/index";
+import { checkEvents, checkSnapshot, findingTier, fingerprint, focusIndicatorFindings, type Finding } from "../../src/detect/index";
 import { APP, events, expectValid, init, openPage, output, rowOf, type Output } from "./harness";
 
 // The test viewport is 1280 wide: the default band is 1024-1439.
@@ -1027,4 +1027,47 @@ test("a label click the browser does not forward, and that changes nothing, is a
   for (const f of dead) expect(f.evidence.structural_id).toBe(false);
   const settledOf = events(out).filter((e) => e.type === "ui.click.settled").slice(-3);
   for (const e of settledOf) expect(e.data).toMatchObject({ target_interactive: true, first_feedback_ms: null });
+});
+
+// ---- Accessibility -------------------------------------------------------------
+
+test("no_focus_indicator: Tab to outline:none buttons, with and without a :focus-within wrapper or a focus transition", async ({ page }) => {
+  await openPage(
+    page,
+    `<style>
+       .wrap:focus-within { box-shadow: 0 0 0 2px blue; }
+       .fade { outline: 2px solid transparent; transition: outline-color 0.2s; }
+       .fade:focus-visible { outline-color: blue; }
+       .ring:focus-visible { outline: none; box-shadow: 0 0 0 3px orange; }
+     </style>
+     <button data-testid="bare" style="outline:none">Bare</button>
+     <button data-testid="ua">Default ring</button>
+     <span class="wrap"><button data-testid="wrapped" style="outline:none">Wrapped</button></span>
+     <button data-testid="fade" class="fade">Fade</button>
+     <button data-testid="shadow" class="ring">Shadow</button>
+     <div><div><a href="#" data-testid="deep" style="outline:none">Deep link</a></div></div>
+     <button data-testid="end">End</button>`,
+  );
+  await init(page);
+  const snapshot = await page.evaluate(() => (window as any).handle.snapshot());
+  for (let i = 0; i < 8; i++) await page.keyboard.press("Tab");
+  await page.waitForTimeout(100);
+  const out = await output(page);
+  expectValid(out);
+  const browser = findingsOf(out).filter((e) => e.data.check === "a11y.no_focus_indicator").map((e) => e.data);
+  expect(browser.map((f) => f.control_id)).toEqual(["bare", "deep"]);
+  // Node builds the same finding from the same observation.
+  const node = (["bare", "deep"] as const).flatMap((id) =>
+    focusIndicatorFindings({
+      control_id: id,
+      route_template: "/",
+      viewport_width: 1280,
+      viewport_height: 800,
+      snapshot_sha256: snapshot.sha256,
+      indicator_changed: false,
+      wrappers: id === "bare" ? 0 : 2,
+    }),
+  );
+  expect(browser).toEqual(node.map(wire));
+  expect(browser[0].fingerprint).toBe(fp("no_focus_indicator", ["bare"]));
 });

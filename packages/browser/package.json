@@ -77,5 +77,9 @@
         "./dist/page-script.d.ts"
       ]
     }
+  },
+  "devDependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   }
 }
