@@ -220,9 +220,9 @@ async function idleRun(throttle, sdk) {
 }
 
 // 7. A thousand infinite CSS spinners (half inside an aria-hidden subtree), with
-// and without the SDK: main-thread busy time in the 5 s while the SDK finds
-// and looks at the loops, then in a later 5 s once it has settled, and what
-// the SDK sent.
+// and without the SDK: main-thread busy time in the 5 s from init (which holds
+// the SDK's start: finding the loops and the first looks at them), then in 5 s
+// from 10 s after init, once it has settled, and what the SDK sent.
 const SPINNERS = arg("spinners", 1000);
 function spinnerBody(count) {
   const one = (i) => `<i data-testid="spin-${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + ((i / 26) | 0) % 26)}" class="spin"></i>`;
@@ -232,13 +232,21 @@ function spinnerBody(count) {
 }
 async function spinnerRun(throttle, sdk) {
   const options = { routeSettleMs: 3_600_000, flushIntervalMs: 3_600_000, snapshots: false, detect: { offscreenLoopMs: 1000 } };
-  const { page, close } = await openPage(spinnerBody(SPINNERS), { throttle, sdk, options });
+  const { page, close } = await openPage(spinnerBody(SPINNERS), { throttle, sdk: false });
   await page.waitForTimeout(1500 * throttle);
-  await browser.startTracing(page, { categories: ["disabled-by-default-devtools.timeline", "devtools.timeline"] });
-  await page.evaluate(() => new Promise((done) => setTimeout(done, 5000)));
+  const categories = ["disabled-by-default-devtools.timeline", "devtools.timeline"];
+  await browser.startTracing(page, { categories });
+  await page.evaluate(
+    ({ sdk, options }) =>
+      new Promise((done) => {
+        if (sdk) window.handle = CodepressInteractions.initInteractions({ sink: window.sink, allowedApiOrigins: [location.origin], ...options });
+        setTimeout(done, 5000);
+      }),
+    { sdk, options },
+  );
   const tasks = mainThreadTasks(await browser.stopTracing());
   await page.evaluate(() => new Promise((done) => setTimeout(done, 5000)));
-  await browser.startTracing(page, { categories: ["disabled-by-default-devtools.timeline", "devtools.timeline"] });
+  await browser.startTracing(page, { categories });
   await page.evaluate(() => new Promise((done) => setTimeout(done, 5000)));
   const settled = mainThreadTasks(await browser.stopTracing());
   const sent = sdk
@@ -306,7 +314,7 @@ for (const throttle of SNAPSHOTS_ONLY ? [] : THROTTLES) {
   const [c0, c1, i0, i1] = [results.clicks[`${throttle}x/none`], results.clicks[`${throttle}x/sdk`], results.idle[`${throttle}x/none`], results.idle[`${throttle}x/sdk`]];
   out.push(`| ${throttle}x | ${r(c0.median, 3)} / ${r(c0.p95, 3)} ms | ${r(c1.median, 3)} / ${r(c1.p95, 3)} ms | ${r(i0.busyMs, 1)} / ${r(i1.busyMs, 1)} ms | ${r(i1.longestTask, 1)} ms | ${i1.longTasks} | ${i1.timersScheduled} | ${i1.liveMutationObservers} |`);
 }
-out.push("", `| CPU | ${SPINNERS} spinners, first 5 s main-thread busy, no SDK / SDK | Longest task, SDK | 5 s from 10 s on, no SDK / SDK | Events sent | Findings sent |`);
+out.push("", `| CPU | ${SPINNERS} spinners, 5 s from init, main-thread busy, no SDK / SDK | Longest task, SDK | 5 s from 10 s after init, no SDK / SDK | Events sent | Findings sent |`);
 out.push("| --- | --- | --- | --- | --- | --- |");
 for (const throttle of THROTTLES) {
   const [s0, s1] = [results.spinners[`${throttle}x/none`], results.spinners[`${throttle}x/sdk`]];
