@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   checkEvents,
+  checkMotion,
   checkSnapshot,
   detect,
   fingerprint,
@@ -20,6 +21,7 @@ import {
   type Finding,
   type SnapshotBody,
   type FindingData,
+  type MotionRun,
   type TimelineEvent,
 } from "../src/detect/index";
 import { BLACK, WHITE, composite, contrastRatio, floorRatio, parseColor, requiredRatio } from "../src/color";
@@ -962,5 +964,114 @@ describe("a11y.hover_only_content", () => {
     const [finding] = hoverOnlyFindings({ ...observation, control_id: "main/nav/button", viewport_width: 390 });
     expect(finding.evidence.structural_id).toBe(true);
     expect(finding.fingerprint).toBe(fingerprint("hover_only_content", "/settings", "0-479", ["main/nav/button"]));
+  });
+});
+
+describe("motion checks", () => {
+  const run = (over: Partial<MotionRun> = {}): MotionRun => ({
+    subject: {
+      index: -1, tag: "div", role: null, test_id: "panel", stable_id: "panel",
+      x: 0, y: 0, width: 400, height: 300, position: "static", z_index: null,
+    },
+    route_template: "/settings/:id",
+    viewport_width: 1280,
+    viewport_height: 800,
+    snapshot_sha256: null,
+    transition: true,
+    elapsed_ms: 100,
+    ended: false,
+    running: true,
+    duration_ms: 300,
+    infinite: false,
+    layout_props: 0,
+    motion_props: 1,
+    element_area_px: 120000,
+    visible: null,
+    zero_box: null,
+    outside_document: null,
+    visibility_hidden: null,
+    aria_hidden: null,
+    transparent: null,
+    reduced_motion: false,
+    long_frames: 0,
+    max_blocking_ms: 0,
+    ...over,
+  });
+  const kinds = (runs: MotionRun[], options = {}) => checkMotion(runs, options).map((f) => f.type);
+
+  it("layout properties are layout_animation; transform and opacity are not", () => {
+    const [found] = checkMotion([run({ layout_props: 2 })]);
+    expect(found).toMatchObject({ check: "motion.layout_animation", subject: { stable_id: "panel" }, control_id: null, interaction_id: null });
+    expect(found.evidence).toEqual({ duration_ms: 300, layout_props: 2, element_area_px: 120000, infinite: false, transition: true, subject_structural_id: false });
+    expect(found.fingerprint).toBe(fingerprint("layout_animation", "/settings/:id", "1024-1439", ["panel", null]));
+    expect(kinds([run()])).toEqual([]);
+  });
+
+  it("stuck: a finite run with no end after stuckAnimationMs; ended, paused or infinite runs are not", () => {
+    expect(kinds([run({ elapsed_ms: 10_000 })])).toEqual(["stuck_animation"]);
+    expect(kinds([run({ elapsed_ms: 9_999 })])).toEqual([]);
+    expect(kinds([run({ elapsed_ms: 600, duration_ms: 20_000 })], { stuckAnimationMs: 500 })).toEqual(["stuck_animation"]);
+    expect(kinds([run({ elapsed_ms: 20_000, ended: true })])).toEqual([]);
+    expect(kinds([run({ elapsed_ms: 20_000, running: false })])).toEqual([]);
+    expect(kinds([run({ elapsed_ms: 20_000, infinite: true, duration_ms: null })])).toEqual([]);
+  });
+
+  it("offscreen loop: an infinite run past offscreenLoopMs on an element that is not visible", () => {
+    const loop = { infinite: true, duration_ms: null, elapsed_ms: 6_000 };
+    const [found] = checkMotion([run({ ...loop, visible: false, aria_hidden: true, zero_box: false })]);
+    expect(found.type).toBe("offscreen_loop");
+    expect(found.evidence).toMatchObject({ elapsed_ms: 6000, aria_hidden: true, zero_box: false });
+    expect(kinds([run({ ...loop, visible: true })])).toEqual([]);
+    expect(kinds([run({ ...loop, visible: null })])).toEqual([]);
+    expect(kinds([run({ ...loop, elapsed_ms: 4_000, visible: false })])).toEqual([]);
+    expect(kinds([run({ ...loop, elapsed_ms: 400, visible: false })], { offscreenLoopMs: 300 })).toEqual(["offscreen_loop"]);
+    expect(kinds([run({ ...loop, visible: false, duration_ms: 5000, infinite: false })])).toEqual([]);
+  });
+
+  it("janky: long frames during a run on a visible element", () => {
+    const [found] = checkMotion([run({ long_frames: 3, max_blocking_ms: 120.4, visible: true })]);
+    expect(found.type).toBe("janky_animation");
+    expect(found.evidence).toMatchObject({ long_frames: 3, max_blocking_ms: 120 });
+    expect(kinds([run({ long_frames: 3, max_blocking_ms: 120, visible: false })])).toEqual([]);
+    expect(kinds([run({ long_frames: 3, max_blocking_ms: 120, visible: null })])).toEqual([]);
+  });
+
+  it("reduced motion ignored: over 200 ms, moving or fading, at least 10% of the viewport, only when the user asked", () => {
+    const asked = { reduced_motion: true };
+    const [found] = checkMotion([run(asked)]);
+    expect(found.type).toBe("reduced_motion_ignored");
+    expect(found.check).toBe("a11y.reduced_motion_ignored");
+    expect(found.evidence).toMatchObject({ duration_ms: 300, motion_props: 1, element_area_px: 120000, viewport_area_ratio: 0.117 });
+    expect(kinds([run()])).toEqual([]);
+    expect(kinds([run({ ...asked, duration_ms: 200 })])).toEqual([]);
+    expect(kinds([run({ ...asked, duration_ms: null })])).toEqual([]);
+    expect(kinds([run({ ...asked, infinite: true, duration_ms: null })])).toEqual(["reduced_motion_ignored"]);
+    expect(kinds([run({ ...asked, motion_props: 0 })])).toEqual([]);
+    expect(kinds([run({ ...asked, element_area_px: 0.09 * 1280 * 800 })])).toEqual([]);
+  });
+
+  it("one finding per check and element; checks can be switched off; detect() includes motion", () => {
+    expect(kinds([run({ layout_props: 1 }), run({ layout_props: 1, duration_ms: 900 })])).toEqual(["layout_animation"]);
+    const other = run({ layout_props: 1 });
+    other.subject = { ...other.subject, test_id: null, stable_id: "html/body/div" };
+    const two = checkMotion([run({ layout_props: 1 }), other]);
+    expect(two.map((f) => f.subject?.stable_id)).toEqual(["panel", "html/body/div"]);
+    expect(two[1].evidence.subject_structural_id).toBe(true);
+    expect(kinds([run({ layout_props: 1, reduced_motion: true })], { checks: ["reduced_motion_ignored"] })).toEqual(["reduced_motion_ignored"]);
+    expect(detect({ motion: [run({ layout_props: 1 })] }).map((f) => f.type)).toEqual(["layout_animation"]);
+    // Malformed input is skipped, never thrown on.
+    expect(checkMotion([null as unknown as MotionRun, {} as MotionRun])).toEqual([]);
+  });
+
+  it("evidence is numbers and booleans only, within the wire bounds", () => {
+    const all = checkMotion([
+      run({ layout_props: 1, reduced_motion: true, elapsed_ms: 20_000, long_frames: 1, max_blocking_ms: 80, visible: true }),
+    ]);
+    expect(all.map((f) => f.type).sort()).toEqual(["janky_animation", "layout_animation", "reduced_motion_ignored", "stuck_animation"]);
+    for (const finding of all) {
+      expect(Object.keys(finding.evidence).length).toBeLessThanOrEqual(32);
+      for (const value of Object.values(finding.evidence))
+        expect(value === null || typeof value === "boolean" || Number.isFinite(value)).toBe(true);
+    }
   });
 });

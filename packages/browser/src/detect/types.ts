@@ -21,6 +21,11 @@ export const CHECK_NAMES = [
   "low_contrast",
   "unnamed_control",
   "hover_only_content",
+  "layout_animation",
+  "stuck_animation",
+  "offscreen_loop",
+  "janky_animation",
+  "reduced_motion_ignored",
 ] as const;
 
 export type CheckName = (typeof CHECK_NAMES)[number];
@@ -46,6 +51,11 @@ export const CHECK_IDS: Record<CheckName, string> = {
   low_contrast: "a11y.low_contrast",
   unnamed_control: "a11y.unnamed_control",
   hover_only_content: "a11y.hover_only_content",
+  layout_animation: "motion.layout_animation",
+  stuck_animation: "motion.stuck_animation",
+  offscreen_loop: "motion.offscreen_loop",
+  janky_animation: "motion.janky_animation",
+  reduced_motion_ignored: "a11y.reduced_motion_ignored",
 };
 
 /** Bumped when a check's meaning changes, so old and new findings are not mixed. */
@@ -126,6 +136,10 @@ export interface DetectOptions {
   layoutShiftScore?: number;
   /** Slow input: slowest event timing at or above this many ms. Default 200. */
   slowInputMs?: number;
+  /** Stuck animation: a finite animation or transition with no end or cancel this many ms after it started. Default 10000. */
+  stuckAnimationMs?: number;
+  /** Offscreen loop: an infinite animation running longer than this many ms on an element that is not visible. Default 5000. */
+  offscreenLoopMs?: number;
   /** Stuck busy is measured up to this time (epoch ms). Default: the last event's time. */
   now?: number;
 }
@@ -143,6 +157,8 @@ export interface ResolvedOptions {
   stuckBusyMs: number;
   layoutShiftScore: number;
   slowInputMs: number;
+  stuckAnimationMs: number;
+  offscreenLoopMs: number;
   now: number | undefined;
 }
 
@@ -170,6 +186,8 @@ export function resolveOptions(options: DetectOptions = {}): ResolvedOptions {
     stuckBusyMs: num(options.stuckBusyMs, 10000),
     layoutShiftScore: num(options.layoutShiftScore, 0.1),
     slowInputMs: num(options.slowInputMs, 200),
+    stuckAnimationMs: num(options.stuckAnimationMs, 10000),
+    offscreenLoopMs: num(options.offscreenLoopMs, 5000),
     now: typeof options.now === "number" && Number.isFinite(options.now) ? options.now : undefined,
   };
 }

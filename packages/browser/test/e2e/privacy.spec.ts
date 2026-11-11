@@ -375,3 +375,37 @@ test("a hover and focus sweep returns no tooltip text, class names, attribute va
   expect(serialized.toLowerCase()).not.toContain(S.toLowerCase());
   for (const text of ["tooltip text", "font-family", "label", "title"]) expect(serialized).not.toContain(text);
 });
+
+test("motion findings carry no animation names, property names or values, or text", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openPage(
+    page,
+    `<style>
+      @keyframes ${S}-drop{from{padding-top:0;transform:translateY(-${S.length}px)}to{padding-top:20px;transform:none}}
+      .${S}-box{position:relative;width:700px;height:400px;background:#ddd;transition:margin-left 400ms}
+      .${S}-box.on{margin-left:13px;animation:${S}-drop 400ms 1}
+    </style>
+    <div class="${S}-box" id="box" title="${S} title" aria-label="${S} label">${S} animated text</div>`,
+  );
+  await init(page);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const box = document.getElementById("box")!;
+        let left = 2;
+        const done = () => --left === 0 && resolve();
+        box.addEventListener("animationend", done, { once: true });
+        box.addEventListener("transitionend", done, { once: true });
+        box.classList.add("on");
+      }),
+  );
+  await expect
+    .poll(async () => events(await output(page)).filter((e) => e.type === "ui.finding").map((e) => e.data.check).sort())
+    .toEqual(["a11y.reduced_motion_ignored", "motion.layout_animation"]);
+  const out = await output(page);
+  expectValid(out);
+  const everything = out.serialized.join("\n");
+  expect(everything.toLowerCase()).not.toContain(S.toLowerCase());
+  for (const name of ["margin-left", "marginLeft", "padding-top", "paddingTop", "translateY", "drop", "13px", "20px"])
+    expect(everything, name).not.toContain(name);
+});

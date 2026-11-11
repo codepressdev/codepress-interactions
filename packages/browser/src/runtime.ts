@@ -1,9 +1,10 @@
 import { ClickEffects } from "./click-effects";
-import { checkEvents, checkSnapshot, focusIndicatorFindings } from "./detect/index";
+import { checkEvents, checkSnapshot, focusIndicatorFindings, sortFindings } from "./detect/index";
 import type { TimelineEvent } from "./detect/timeline";
-import { toFindingData, type CheckName, type Finding } from "./detect/types";
+import { resolveOptions, toFindingData, type CheckName, type Finding } from "./detect/types";
 import type { SnapshotBody } from "./format";
 import { HoverEffects } from "./hover-effects";
+import { MotionTracker, type RecentMotion } from "./motion";
 import { PerfSignals } from "./perf";
 import {
   callSink,
@@ -136,6 +137,7 @@ export class Runtime {
   private perf = new PerfSignals();
   private clicks?: ClickEffects;
   private hovers?: HoverEffects;
+  private motion?: MotionTracker;
   private triggers?: SnapshotTriggers;
   private reportedSignals = false;
   // Snapshots
@@ -253,6 +255,7 @@ export class Runtime {
             "click_effects",
             ...(this.hovers ? ["hover_effects"] : []),
             "performance",
+            "motion",
           ]
         : [],
       attribution: ATTRIBUTION,
@@ -334,6 +337,16 @@ export class Runtime {
     };
     this.perf.start();
     this.removals.push(() => this.perf.stop());
+    this.motion = new MotionTracker({
+      root: this.root,
+      testId: this.testIdFilter,
+      options: resolveOptions(this.findingsEnabled ? this.options.detect : { ...this.options.detect, checks: [] }),
+      route: () => this.route(),
+      snapshotHash: () => this.currentHash,
+      emit: (findings) => this.emitFindings(sortFindings(findings)),
+    });
+    this.motion.start();
+    this.removals.push(() => this.motion?.stop());
     this.triggers = this.snapshotsEnabled
       ? new SnapshotTriggers({
           routeSettleMs: numberOption(this.options.routeSettleMs, 1000, 60000),
@@ -813,6 +826,15 @@ export class Runtime {
       this.targetKeys.set(element, key);
     }
     return key;
+  }
+
+  /**
+   * Internal, for hover and focus follow-through: CSS animations and
+   * transitions that started on `element` or inside it at or after `sinceMs`
+   * (a `performance.now()` time). Counts only; the last 128 starts are kept.
+   */
+  recentMotion(element: Element, sinceMs: number): RecentMotion {
+    return this.motion?.recentMotion(element, sinceMs) ?? { animations: 0, transitions: 0 };
   }
 
   // ---- Findings --------------------------------------------------------

@@ -219,13 +219,41 @@ async function idleRun(throttle, sdk) {
   };
 }
 
+// 7. A thousand infinite CSS spinners (half inside an aria-hidden subtree) for
+// 5 s, with and without the SDK: main-thread busy time and what the SDK sent.
+const SPINNERS = arg("spinners", 1000);
+function spinnerBody(count) {
+  const one = (i) => `<i data-testid="spin-${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + ((i / 26) | 0) % 26)}" class="spin"></i>`;
+  const half = count >> 1;
+  return `<style>.spin{display:inline-block;width:8px;height:8px;border:2px solid #888;border-top-color:transparent;border-radius:50%;animation:spin 800ms linear infinite}@keyframes spin{to{transform:rotate(360deg)}}</style>
+<div>${Array.from({ length: half }, (_, i) => one(i)).join("")}</div><div aria-hidden="true">${Array.from({ length: count - half }, (_, i) => one(half + i)).join("")}</div>`;
+}
+async function spinnerRun(throttle, sdk) {
+  const options = { routeSettleMs: 3_600_000, flushIntervalMs: 3_600_000, snapshots: false, detect: { offscreenLoopMs: 1000 } };
+  const { page, close } = await openPage(spinnerBody(SPINNERS), { throttle, sdk, options });
+  await page.waitForTimeout(1500 * throttle);
+  await browser.startTracing(page, { categories: ["disabled-by-default-devtools.timeline", "devtools.timeline"] });
+  await page.evaluate(() => new Promise((done) => setTimeout(done, 5000)));
+  const tasks = mainThreadTasks(await browser.stopTracing());
+  const sent = sdk
+    ? await page.evaluate(async () => {
+        await window.handle.flush();
+        const events = memory.batches.flatMap((b) => b.events);
+        const findings = events.filter((e) => e.type === "ui.finding");
+        return { events: events.length, findings: findings.length, checks: [...new Set(findings.map((e) => e.data.check))] };
+      })
+    : null;
+  await close();
+  return { busyMs: tasks.reduce((a, b) => a + b, 0), longestTask: Math.max(...tasks), sent };
+}
+
 browser = await chromium.launch();
 const machine = {
   cpu: (() => { try { return execSync("sysctl -n machdep.cpu.brand_string").toString().trim(); } catch { return cpus()[0]?.model; } })(),
   cores: cpus().length, memoryGb: Math.round(totalmem() / 2 ** 30), os: `${process.platform} ${release()}`,
   node: process.version, chromium: browser.version(), headless: true, viewport: "1280x720",
 };
-const results = { machine, runs: RUNS, bundle: sizes, snapshot: {}, clicks: {}, idle: {} };
+const results = { machine, runs: RUNS, bundle: sizes, snapshot: {}, clicks: {}, idle: {}, spinners: {} };
 for (const throttle of THROTTLES) {
   for (const size of SIZES) {
     const runs = [];
@@ -244,7 +272,14 @@ for (const throttle of THROTTLES) {
   if (SNAPSHOTS_ONLY) continue;
   for (const sdk of [false, true]) results.clicks[`${throttle}x/${sdk ? "sdk" : "none"}`] = await clickRun(throttle, sdk);
   for (const sdk of [false, true]) results.idle[`${throttle}x/${sdk ? "sdk" : "none"}`] = await idleRun(throttle, sdk);
-  console.error(`clicks/idle ${throttle}x`, results.clicks, results.idle);
+  for (const sdk of [false, true]) {
+    const runs = [];
+    for (let i = 0; i < Math.min(RUNS, 3); i++) runs.push(await spinnerRun(throttle, sdk));
+    results.spinners[`${throttle}x/${sdk ? "sdk" : "none"}`] = {
+      busyMs: median(runs.map((x) => x.busyMs)), longestTask: median(runs.map((x) => x.longestTask)), sent: runs[0].sent,
+    };
+  }
+  console.error(`clicks/idle/spinners ${throttle}x`, results.clicks, results.idle, results.spinners);
 }
 await browser.close();
 
@@ -263,6 +298,12 @@ if (!SNAPSHOTS_ONLY) out.push("| --- | --- | --- | --- | --- | --- | --- | --- |
 for (const throttle of SNAPSHOTS_ONLY ? [] : THROTTLES) {
   const [c0, c1, i0, i1] = [results.clicks[`${throttle}x/none`], results.clicks[`${throttle}x/sdk`], results.idle[`${throttle}x/none`], results.idle[`${throttle}x/sdk`]];
   out.push(`| ${throttle}x | ${r(c0.median, 3)} / ${r(c0.p95, 3)} ms | ${r(c1.median, 3)} / ${r(c1.p95, 3)} ms | ${r(i0.busyMs, 1)} / ${r(i1.busyMs, 1)} ms | ${r(i1.longestTask, 1)} ms | ${i1.longTasks} | ${i1.timersScheduled} | ${i1.liveMutationObservers} |`);
+}
+out.push("", `| CPU | ${SPINNERS} spinners, 5 s main-thread busy, no SDK / SDK | Longest task, SDK | Events sent | Findings sent |`);
+out.push("| --- | --- | --- | --- | --- |");
+for (const throttle of THROTTLES) {
+  const [s0, s1] = [results.spinners[`${throttle}x/none`], results.spinners[`${throttle}x/sdk`]];
+  out.push(`| ${throttle}x | ${r(s0.busyMs, 1)} / ${r(s1.busyMs, 1)} ms | ${r(s1.longestTask, 1)} ms | ${s1.sent?.events} | ${s1.sent?.findings} (${(s1.sent?.checks ?? []).join(", ")}) |`);
 }
 console.log(out.join("\n"));
 console.log("\n```json\n" + JSON.stringify(results, null, 2) + "\n```");
