@@ -66,6 +66,8 @@ interface Pending {
   v: 1;
   /** The salt of the load that made it. */
   s: string;
+  /** Its number within that load. */
+  i: number;
   /** Hash of the page path. */
   p: string;
   /** Deadline, epoch ms. */
@@ -93,6 +95,8 @@ interface Pending {
 
 export interface EffectHost {
   root: Element;
+  /** Quiet time (no DOM change, no observed request in flight) before a reload's expectation can fail. */
+  settleMs: number;
   route(): string | null;
   snapshotHash(): string | null;
   emit(observation: EffectObservation): void;
@@ -186,9 +190,20 @@ function parseState(value: string): State | null {
 export class EffectContracts {
   /** Made per page load; stored with each expectation so the next load can hash with it. Never sent. */
   private readonly salt = randomSalt();
-  private rechecked = false;
+  /** Numbers this load's expectations, so one can be removed from storage by identity. */
+  private sequence = 0;
+  /** Expectations from earlier loads of this page, not decided yet. */
+  private waiting: Pending[];
+  private watching = false;
+  private stopped = false;
+  private observer?: MutationObserver;
+  private quietTimer?: ReturnType<typeof setTimeout>;
+  private deadlineTimer?: ReturnType<typeof setTimeout>;
+  private inflight = 0;
 
-  constructor(private host: EffectHost) {}
+  constructor(private host: EffectHost) {
+    this.waiting = this.load();
+  }
 
   /** Elements under the root with an ID attribute equal to `id`, as written. */
   private byTestId(id: string): Element[] {
@@ -398,6 +413,7 @@ export class EffectContracts {
     const entry: Pending = {
       v: 1,
       s: salt,
+      i: ++this.sequence,
       p: hash(salt, "path", location.pathname),
       d: Date.now() + EFFECT_PENDING_MS,
       c: controlId,
@@ -427,34 +443,115 @@ export class EffectContracts {
   }
 
   /**
-   * On a page load: judges the expectations an earlier load of this page in
-   * this tab left, once. Called after the first settled snapshot.
+   * On the next load, an expectation is decided only on evidence:
+   *
+   * - It passes as soon as the effect is seen holding: the added target, the
+   *   state or every saved value is there. An absent removal target is not
+   *   evidence before the page is quiet (the list may not have loaded yet).
+   * - It fails only when the effect still does not hold once the page has been
+   *   quiet (no DOM change, no observed request in flight) for `settleMs`.
+   * - Targets that never appear, or a page that never goes quiet, decide
+   *   nothing: the expectation is dropped at its deadline with no finding.
+   *
+   * Looks happen after each settled snapshot from the first one on, and each
+   * time the page goes quiet. Undecided expectations stay in storage, so a
+   * further reload carries on with them.
    */
-  recheck(): void {
-    if (this.rechecked) return;
-    this.rechecked = true;
-    const entries = readPending();
-    if (!entries.length) return;
+  settled(): void {
+    if (!this.waiting.length || this.stopped) return;
+    if (!this.watching) this.watchQuiet();
+    this.evaluate(false);
+  }
+
+  /** An observed request started; returns its completion callback. Quiet waits for it. */
+  requestStarted(): () => void {
+    if (!this.waiting.length || this.stopped) return () => {};
+    this.inflight++;
+    clearTimeout(this.quietTimer);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      this.inflight = Math.max(0, this.inflight - 1);
+      this.activity();
+    };
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.unwatch();
+  }
+
+  /** The expectations an earlier load of this page in this tab left; expired ones are removed from storage. */
+  private load(): Pending[] {
+    try {
+      const entries = readPending();
+      if (!entries.length) return [];
+      const now = Date.now();
+      const live = entries.filter((entry) => typeof entry.d === "number" && entry.d > now && typeof entry.s === "string");
+      if (live.length !== entries.length) writePending(live);
+      return live.filter((entry) => entry.s !== this.salt && entry.p === hash(entry.s, "path", location.pathname));
+    } catch {
+      return [];
+    }
+  }
+
+  private watchQuiet(): void {
+    this.watching = true;
+    this.observer = new MutationObserver(() => this.activity());
+    this.observer.observe(this.host.root, { subtree: true, childList: true, attributes: true, characterData: true });
+    this.activity();
+    const deadline = Math.min(...this.waiting.map((entry) => entry.d));
+    this.deadlineTimer = setTimeout(() => this.evaluate(false), Math.max(0, deadline - Date.now()) + 1);
+  }
+
+  private unwatch(): void {
+    this.watching = false;
+    this.observer?.disconnect();
+    this.observer = undefined;
+    clearTimeout(this.quietTimer);
+    clearTimeout(this.deadlineTimer);
+  }
+
+  /** Something happened: the page is quiet again `settleMs` after the last change with no request in flight. */
+  private activity(): void {
+    if (!this.watching) return;
+    clearTimeout(this.quietTimer);
+    if (this.inflight > 0) return;
+    this.quietTimer = setTimeout(() => this.evaluate(true), this.host.settleMs);
+  }
+
+  private evaluate(quiet: boolean): void {
+    if (this.stopped) return;
     const now = Date.now();
-    const keep: Pending[] = [];
     const indexes = new Map<string, Map<string, Element[]>>();
-    for (const entry of entries) {
-      if (typeof entry.d !== "number" || entry.d <= now || typeof entry.s !== "string") continue;
-      // Made by this load, or for another page: left for a later load.
-      if (entry.s === this.salt || entry.p !== hash(entry.s, "path", location.pathname)) {
-        keep.push(entry);
+    const decided: Pending[] = [];
+    for (const entry of this.waiting) {
+      // Past its deadline: undecided means unknown, not failed.
+      if (entry.d <= now) {
+        decided.push(entry);
         continue;
       }
       let index = indexes.get(entry.s);
       if (!index) indexes.set(entry.s, (index = this.index(entry.s)));
+      let judged: Judged;
       try {
-        const observation = this.reloaded(entry, index);
-        if (observation) this.host.emit(observation);
+        judged = this.judge(entry, index);
       } catch {
-        /* A malformed entry is dropped. */
+        // A malformed entry is dropped.
+        decided.push(entry);
+        continue;
+      }
+      if (judged.verdict === "held" && (quiet || judged.confirmed)) decided.push(entry);
+      else if (judged.verdict === "failed" && quiet) {
+        decided.push(entry);
+        this.host.emit(judged.observation);
       }
     }
-    writePending(keep);
+    if (!decided.length) return;
+    this.waiting = this.waiting.filter((entry) => !decided.includes(entry));
+    writePending(readPending().filter((entry) => !decided.some((done) => done.s === entry.s && done.i === entry.i)));
+    if (!this.waiting.length) this.unwatch();
   }
 
   /** Elements under the root by hashed item key and hashed test ID, with one load's salt. */
@@ -481,8 +578,8 @@ export class EffectContracts {
     return index;
   }
 
-  private reloaded(entry: Pending, index: Map<string, Element[]>): EffectObservation | null {
-    if (typeof entry.c !== "string" || !entry.m || typeof entry.m !== "object") return null;
+  /** What the page shows now for one expectation. */
+  private judge(entry: Pending, index: Map<string, Element[]>): Judged {
     const observation: EffectObservation = {
       ...this.base(entry.c, null, entry.e),
       request_count: entry.m.request_count,
@@ -492,9 +589,10 @@ export class EffectContracts {
       present_at_settle: entry.m.present_at_settle,
       vanished_then_returned: entry.m.vanished_then_returned,
     };
+    const unknown: Judged = { verdict: "unknown", confirmed: false, observation };
     const found = (digest: string) => (index.get(digest) ?? []).filter(present);
     if (entry.e === EFFECTS.saves) {
-      if (!Array.isArray(entry.f)) return null;
+      if (!Array.isArray(entry.f) || !entry.f.length) return unknown;
       let seen = 0;
       let reverted = 0;
       for (const [id, saved] of entry.f) {
@@ -505,17 +603,17 @@ export class EffectContracts {
         seen++;
         if (hash(entry.s, "value", value) !== saved) reverted++;
       }
-      if (!seen) return null;
       observation.fields_saved = entry.f.length;
       observation.fields_reverted = reverted;
       observation.matches = seen;
-      return reverted > 0 ? observation : null;
+      if (reverted > 0) return { verdict: "failed", confirmed: false, observation };
+      return seen === entry.f.length ? { verdict: "held", confirmed: true, observation } : unknown;
     }
-    if (!Array.isArray(entry.t) || !entry.t.length) return null;
+    if (!Array.isArray(entry.t) || !entry.t.length) return unknown;
     const after = entry.t.map(([digest]) => found(digest));
     observation.matches = after.reduce((sum, elements) => sum + elements.length, 0);
     if (entry.e === EFFECTS.sets) {
-      if (!Array.isArray(entry.k)) return null;
+      if (!Array.isArray(entry.k)) return unknown;
       let judged = 0;
       let held = true;
       after.forEach((elements, i) => {
@@ -525,18 +623,32 @@ export class EffectContracts {
         const state: State = { kind, literal: literal ?? null };
         if (!elements.every((element) => stateHeld(element, state, (value) => hash(entry.s, "state", value)))) held = false;
       });
-      if (!judged || held) return null;
-      observation.state_held = false;
-      return observation;
+      if (!held) {
+        observation.state_held = false;
+        return { verdict: "failed", confirmed: false, observation };
+      }
+      observation.state_held = true;
+      return judged === entry.t.length ? { verdict: "held", confirmed: true, observation } : unknown;
     }
     if (entry.e === EFFECTS.removes) {
       observation.expected_removed = entry.t.length;
       observation.present_after_reload = after.some((elements, i) => elements.length >= entry.t![i][1]);
-      return observation.present_after_reload ? observation : null;
+      // Absent counts as removed only once the page is quiet.
+      return { verdict: observation.present_after_reload ? "failed" : "held", confirmed: false, observation };
     }
-    if (entry.e !== EFFECTS.adds) return null;
+    if (entry.e !== EFFECTS.adds) return unknown;
     observation.expected_added = entry.t.length;
     observation.present_after_reload = after.every((elements, i) => elements.length > entry.t![i][1]);
-    return observation.present_after_reload ? null : observation;
+    if (observation.present_after_reload) return { verdict: "held", confirmed: true, observation };
+    // A target with no element at all has not been rendered: unknown, not lost.
+    if (after.some((elements) => elements.length === 0)) return unknown;
+    return { verdict: "failed", confirmed: false, observation };
   }
+}
+
+interface Judged {
+  verdict: "held" | "failed" | "unknown";
+  /** A hold seen before the page is quiet still counts (it is positive evidence). */
+  confirmed: boolean;
+  observation: EffectObservation;
 }

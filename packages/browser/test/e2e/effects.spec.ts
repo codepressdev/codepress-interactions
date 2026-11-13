@@ -24,6 +24,11 @@ async function reloadAndCheck(page: Page): Promise<void> {
   await page.evaluate(() => (window as any).handle.snapshot());
 }
 
+const STORE = "codepress-interactions:effects";
+const stored = (page: Page) => page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) ?? "[]").length as number, STORE);
+/** Waits until every expectation for the next load has been decided (and removed from storage). */
+const expectDecided = (page: Page) => expect.poll(() => stored(page)).toBe(0);
+
 const LIST = (handler: string, before = "") => `
 <ul id="list">
   <li data-interaction-item="inv-a" data-testid="invite-row">A <button data-testid="remove-invite" data-interaction-removes>Remove</button></li>
@@ -148,7 +153,7 @@ test("a removal that persists across a reload gives no finding", async ({ page }
   await init(page, { clickSettleMs: 150 });
   await clickAndSettle(page, '[data-testid="remove-invite"]');
   await reloadAndCheck(page);
-  await page.waitForTimeout(300);
+  await expectDecided(page);
   expect(findings(await output(page))).toEqual([]);
   expect(await page.evaluate(() => sessionStorage.getItem("codepress-interactions:effects"))).toBeNull();
 });
@@ -198,7 +203,7 @@ test("adds: a target that never appears is reported; one that appears and stays 
   expect(findings(out)[0].data).toMatchObject({ control_id: "add-token-broken" });
   expect(findings(out)[0].data.evidence).toMatchObject({ effect: 2, expected_added: 1, present_at_settle: false, matches: 2 });
   await reloadAndCheck(page);
-  await page.waitForTimeout(300);
+  await expectDecided(page);
   expect(findings(await output(page))).toEqual([]);
 });
 
@@ -250,7 +255,7 @@ test("sets: a switch that holds at settle and after a reload gives no finding", 
   const first = await clickAndSettle(page, '[data-testid="notify-switch"]');
   expect(findings(first)).toEqual([]);
   await reloadAndCheck(page);
-  await page.waitForTimeout(300);
+  await expectDecided(page);
   expect(findings(await output(page))).toEqual([]);
 });
 
@@ -335,7 +340,7 @@ test("saves: a save that persists gives no finding, at settle or after a reload"
   const first = await clickAndSettle(page, '[data-testid="save-profile"]');
   expect(findings(first)).toEqual([]);
   await reloadAndCheck(page);
-  await page.waitForTimeout(300);
+  await expectDecided(page);
   expect(findings(await output(page))).toEqual([]);
   expect(await page.evaluate(() => sessionStorage.getItem("codepress-interactions:effects"))).toBeNull();
 });
@@ -431,4 +436,193 @@ test("the check is off when left out of detect.checks, and pages without the mar
   await init(page, { clickSettleMs: 150 });
   await clickAndSettle(page, "#b");
   expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
+});
+
+// ---- The next load decides only on evidence, once the page is quiet ---------
+
+/**
+ * Pages that start the SDK before the app fetches its state, as an app does.
+ * The first snapshot comes at 50 ms, long before the state request (400 ms)
+ * renders what the click changed. `persist` decides whether the click's effect
+ * really stuck.
+ */
+const START = `<script>window.handle = CodepressInteractions.initInteractions({
+  sink: window.sink, flushIntervalMs: 3600000, routeSettleMs: 50, clickSettleMs: 150, allowedApiOrigins: [location.origin] });</script>`;
+const ready = `document.body.dataset.ready = "1";`;
+const stateApi = async (route: Route) => {
+  const path = new URL(route.request().url()).pathname;
+  await new Promise((r) => setTimeout(r, path === "/api/state" ? 400 : 60));
+  await route.fulfill({ contentType: "application/json", body: "{}" });
+};
+
+const DELAYED: Record<string, { page: (persist: boolean) => string; control: string; before?: (page: Page) => Promise<void>; failed: Record<string, unknown> }> = {
+  removes: {
+    control: '[data-testid="remove-invite"]',
+    page: (persist) => `${START}
+      <ul id="list"></ul>
+      <script>
+        fetch("/api/state").then(() => {
+          document.getElementById("list").innerHTML =
+            (localStorage.getItem("gone") ? "" : '<li data-interaction-item="inv-a">A <button data-testid="remove-invite" data-interaction-removes>Remove</button></li>') +
+            '<li data-interaction-item="inv-b">B</li>';
+          ${ready}
+        });
+        document.addEventListener("click", async (event) => {
+          if (!event.target.closest('[data-testid="remove-invite"]')) return;
+          event.target.closest("li").remove();
+          ${persist ? `localStorage.setItem("gone", "1");` : ""}
+          await fetch("/api/remove", { method: "POST" });
+        });
+      </script>`,
+    failed: { effect: 1, present_at_settle: false, present_after_reload: true },
+  },
+  adds: {
+    control: '[data-testid="add-token"]',
+    page: (persist) => `${START}
+      <ul id="tokens"></ul>
+      <button data-testid="add-token" data-interaction-adds="token-row">Add</button>
+      <script>
+        const tokens = document.getElementById("tokens");
+        fetch("/api/state").then(() => {
+          tokens.innerHTML = '<li data-testid="token-row">t</li>'.repeat(1 + Number(localStorage.getItem("added") ?? 0));
+          ${ready}
+        });
+        document.querySelector('[data-testid="add-token"]').addEventListener("click", async () => {
+          await fetch("/api/add", { method: "POST" });
+          ${persist ? `localStorage.setItem("added", String(Number(localStorage.getItem("added") ?? 0) + 1));` : ""}
+          tokens.insertAdjacentHTML("beforeend", '<li data-testid="token-row">t</li>');
+        });
+      </script>`,
+    failed: { effect: 2, present_at_settle: true, present_after_reload: false, matches: 1 },
+  },
+  sets: {
+    control: '[data-testid="notify-switch"]',
+    page: (persist) => `${START}
+      <button role="switch" aria-checked="false" data-testid="notify-switch" data-interaction-sets="notify-switch:checked">Notify</button>
+      <script>
+        const sw = document.querySelector('[data-testid="notify-switch"]');
+        fetch("/api/state").then(() => {
+          sw.setAttribute("aria-checked", localStorage.getItem("notify") ? "true" : "false");
+          ${ready}
+        });
+        sw.addEventListener("click", async () => {
+          sw.setAttribute("aria-checked", "true");
+          ${persist ? `localStorage.setItem("notify", "1");` : ""}
+          await fetch("/api/notify", { method: "POST" });
+        });
+      </script>`,
+    failed: { effect: 3, state_held: false },
+  },
+  saves: {
+    control: '[data-testid="save-profile"]',
+    before: (page) => page.fill("#dn", "New name"),
+    page: (persist) => `${START}
+      <input data-testid="display-name" id="dn" value="">
+      <button data-testid="save-profile" data-interaction-saves="display-name">Save</button>
+      <script>
+        const dn = document.getElementById("dn");
+        fetch("/api/state").then(() => {
+          dn.value = localStorage.getItem("dn") ?? "Old name";
+          ${ready}
+        });
+        document.querySelector('[data-testid="save-profile"]').addEventListener("click", async () => {
+          ${persist ? `localStorage.setItem("dn", dn.value);` : ""}
+          await fetch("/api/profile", { method: "POST" });
+        });
+      </script>`,
+    failed: { effect: 4, fields_saved: 1, fields_reverted: 1 },
+  },
+};
+
+async function firstLoad(page: Page, kind: string, persist: boolean): Promise<void> {
+  const setup = DELAYED[kind];
+  await openPage(page, setup.page(persist), { api: stateApi });
+  await page.waitForSelector("body[data-ready]");
+  await setup.before?.(page);
+  const out = await clickAndSettle(page, setup.control);
+  expect(findings(out)).toEqual([]);
+  expect(await stored(page)).toBe(1);
+}
+
+for (const kind of Object.keys(DELAYED)) {
+  test(`${kind}: an effect that held, filled in by a request after the reload's first snapshot, gives no finding`, async ({ page }) => {
+    await firstLoad(page, kind, true);
+    await page.reload();
+    await expectDecided(page);
+    const out = await output(page);
+    // The first snapshot was taken before the state request answered.
+    expect(events(out).some((e) => e.type === "ui.snapshot")).toBe(true);
+    expect(findings(out)).toEqual([]);
+  });
+
+  test(`${kind}: an effect that did not hold, shown by a request after the reload's first snapshot, is reported once the page is quiet`, async ({ page }) => {
+    await firstLoad(page, kind, false);
+    await page.reload();
+    await expect.poll(async () => findings(await output(page)).length).toBe(1);
+    const out = await output(page);
+    expectValid(out);
+    const [finding] = findings(out);
+    expect(finding.interaction_id).toBeNull();
+    expect(finding.data.evidence).toMatchObject(DELAYED[kind].failed);
+    // Judged after the state request rendered, not at the first snapshot.
+    const snapshot = events(out).find((e) => e.type === "ui.snapshot");
+    const answered = events(out).find((e) => e.type === "request.completed");
+    expect(finding.sequence).toBeGreaterThan(snapshot.sequence);
+    expect(finding.sequence).toBeGreaterThan(answered.sequence);
+    await expectDecided(page);
+  });
+}
+
+/** Moves every stored expectation's deadline to `ms` from now. */
+const shortenDeadline = (page: Page, ms: number) =>
+  page.evaluate(
+    ({ key, ms }) => {
+      const entries = JSON.parse(sessionStorage.getItem(key) ?? "[]");
+      for (const entry of entries) entry.d = Date.now() + ms;
+      sessionStorage.setItem(key, JSON.stringify(entries));
+    },
+    { key: STORE, ms },
+  );
+
+test("a page that never goes quiet decides nothing: the expectation is dropped at its deadline with no finding", async ({ page }) => {
+  // On the second load the page changes every 50 ms, so it is never quiet for 150 ms.
+  await openPage(
+    page,
+    LIST(
+      `row().remove(); await fetch("/api/remove", { method: "POST" });`,
+      `if (sessionStorage.getItem("loaded")) setInterval(() => { document.body.dataset.tick = String(Date.now()); }, 50);
+       sessionStorage.setItem("loaded", "1");`,
+    ),
+    { api: slowApi() },
+  );
+  await init(page, { clickSettleMs: 150 });
+  await clickAndSettle(page, '[data-testid="remove-invite"]');
+  await shortenDeadline(page, 2500);
+  await reloadAndCheck(page);
+  // The item is back, but the page was never quiet: still waiting, nothing reported.
+  await page.waitForTimeout(1000);
+  expect(await stored(page)).toBe(1);
+  expect(findings(await output(page))).toEqual([]);
+  await expectDecided(page);
+  expect(findings(await output(page))).toEqual([]);
+});
+
+test("targets that never appear after the reload decide nothing: dropped at the deadline with no finding", async ({ page }) => {
+  // The switch is not rendered on the second load (its panel never loads).
+  await openPage(
+    page,
+    SWITCH(
+      `sw.setAttribute("aria-checked", "true"); await fetch("/api/notify", { method: "POST" });`,
+      `if (sessionStorage.getItem("loaded")) sw.remove(); sessionStorage.setItem("loaded", "1");`,
+    ),
+    { api: slowApi() },
+  );
+  await init(page, { clickSettleMs: 150 });
+  await clickAndSettle(page, '[data-testid="notify-switch"]');
+  await shortenDeadline(page, 2000);
+  await reloadAndCheck(page);
+  await page.waitForTimeout(800);
+  expect(await stored(page)).toBe(1);
+  await expectDecided(page);
+  expect(findings(await output(page))).toEqual([]);
 });

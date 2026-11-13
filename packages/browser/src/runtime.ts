@@ -364,6 +364,7 @@ export class Runtime {
       this.findingsEnabled && this.checkOn("effect_not_applied")
         ? new EffectContracts({
             root: this.root,
+            settleMs: numberOption(this.options.clickSettleMs, 500, 60000),
             route: () => this.route(),
             snapshotHash: () => this.currentHash,
             emit: (observation) => {
@@ -376,11 +377,15 @@ export class Runtime {
             },
           })
         : undefined;
-    // The next load re-checks what an earlier one left after its first settled
+    // The next load looks at what an earlier one left after each settled
     // snapshot; without snapshots, once the route has had time to settle.
-    if (this.effects && !this.snapshotsEnabled) {
-      const timer = setTimeout(() => this.effects?.recheck(), numberOption(this.options.routeSettleMs, 1000, 60000));
-      this.removals.push(() => clearTimeout(timer));
+    if (this.effects) {
+      const effects = this.effects;
+      this.removals.push(() => effects.stop());
+      if (!this.snapshotsEnabled) {
+        const timer = setTimeout(() => effects.settled(), numberOption(this.options.routeSettleMs, 1000, 60000));
+        this.removals.push(() => clearTimeout(timer));
+      }
     }
     this.clicks = new ClickEffects({
       root: this.root,
@@ -770,7 +775,7 @@ export class Runtime {
     const requestLabel = this.label(url, init);
     const started = performance.now();
     this.record("request.started", id, { request_label: requestLabel });
-    const done = this.clicks?.requestStarted() ?? (() => {});
+    const done = this.requestDone();
     let request: Promise<Response>;
     try {
       request = this.originalFetch.call(window, input, modified);
@@ -815,6 +820,16 @@ export class Runtime {
         throw error;
       },
     );
+  }
+
+  /** Tells click follow-through and effect contracts that an observed request started; returns its completion callback. */
+  private requestDone(): (failed: boolean) => void {
+    const click = this.clicks?.requestStarted();
+    const effect = this.effects?.requestStarted();
+    return (failed) => {
+      click?.(failed);
+      effect?.();
+    };
   }
 
   /** Counts window.open during a click as opening a new tab (no DOM change is the expected effect). */
@@ -979,7 +994,7 @@ export class Runtime {
           }
           const requestLabel = runtime.label(url, undefined);
           runtime.record("request.started", id, { request_label: requestLabel });
-          const done = runtime.clicks?.requestStarted() ?? (() => {});
+          const done = runtime.requestDone();
           this.addEventListener(
             "loadend",
             () => {
@@ -1092,6 +1107,13 @@ export class Runtime {
       deduplicated,
     };
     this.lastSnapshot = summary;
+    // Expectations an earlier load left are looked at after every settled snapshot.
+    if (this.effects) {
+      const effects = this.effects;
+      void idle().then(() => {
+        if (this.active) effects.settled();
+      });
+    }
     if (deduplicated) {
       this.snapshotStats.deduplicated++;
       return summary;
@@ -1103,12 +1125,6 @@ export class Runtime {
     this.record("ui.snapshot", null, data);
     this.perf.countContrastUnknown(result.contrastUnknown);
     this.runSnapshotChecks(body, sha256);
-    if (this.effects) {
-      const effects = this.effects;
-      void idle().then(() => {
-        if (this.active) effects.recheck();
-      });
-    }
     // The first screen also reports which performance signals this browser has.
     if (!this.reportedSignals) this.recordPerf(true);
     if (this.snapshotQueue.length >= MAX_PENDING_SNAPSHOTS) {
