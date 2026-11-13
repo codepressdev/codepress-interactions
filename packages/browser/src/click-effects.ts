@@ -3,6 +3,7 @@
  * Everything here is inferred from timing (attribution "inferred"); requests
  * observed in the window are counted, never attached to the click as explicit.
  */
+import type { EffectContracts, EffectWatch } from "./effect-contract";
 import { DIALOGS, Follower, observeOptions, scanAdded, type FollowWindow } from "./follow";
 import type { PerfSignals, SignalCounters } from "./perf";
 import { INTERACTIVE } from "./snapshot";
@@ -26,6 +27,8 @@ export interface ClickHost {
   /** Snapshot after settling; resolves with its hash, or null when skipped. */
   snapshotAfter(): Promise<string | null>;
   emit(interactionId: string, data: ClickSettledData): void;
+  /** Effect contracts in the markup (`data-interaction-removes` and the like); absent when the check is off. */
+  effects?: EffectContracts;
 }
 
 interface ClickWindow extends FollowWindow {
@@ -56,6 +59,8 @@ interface ClickWindow extends FollowWindow {
   selectionChanged: boolean;
   /** A later pointer or key input happened while this click was open. */
   laterInput: boolean;
+  /** The clicked control's effect contract, when it declares one. */
+  effect: EffectWatch | null;
 }
 
 const isDialog = (element: Element): boolean => element.matches(DIALOGS);
@@ -89,6 +94,7 @@ export class ClickEffects {
             click.dialogOpened = true;
         }
         if (!click.dialogOpened && scanAdded(records, isDialog)) click.dialogOpened = true;
+        if (click.effect) this.host.effects?.records(click.effect, records);
         this.effect(click, true);
       },
       ended: (click, reason) => this.finish(click, reason),
@@ -205,11 +211,17 @@ export class ClickEffects {
         !!this.pressSelection &&
         !sameSelection(this.pressSelection, selectionMark()),
       laterInput: false,
+      effect: null,
     };
     try {
       describeTarget(click, event, this.host.root);
     } catch {
       /* Unknown target: reported as not interactive. */
+    }
+    try {
+      click.effect = this.host.effects?.begin(control, event?.target) ?? null;
+    } catch {
+      /* A contract that cannot be read is not checked. */
     }
     // Observed only while a click is open: idle pages pay nothing.
     this.follow.open(click);
@@ -313,6 +325,13 @@ export class ClickEffects {
       before_sha256: click.before,
       after_sha256: null,
     };
+    if (click.effect) {
+      try {
+        this.host.effects?.finish(click.effect, data, reason, click.id);
+      } catch {
+        /* A check failing must never affect capture. */
+      }
+    }
     if (reason !== "settled") {
       this.host.emit(click.id, data);
       return;

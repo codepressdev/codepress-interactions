@@ -409,3 +409,63 @@ test("motion findings carry no animation names, property names or values, or tex
   for (const name of ["margin-left", "marginLeft", "padding-top", "paddingTop", "translateY", "drop", "13px", "20px"])
     expect(everything, name).not.toContain(name);
 });
+
+test("effect contracts: item keys, target test IDs, states, field IDs and values reach no batch, snapshot or sessionStorage", async ({ page }) => {
+  // A Remove that does nothing, a Connect that holds until a reload, and a Save the reload undoes.
+  const body = `
+    <ul>
+      <li data-interaction-item="${S}-key" data-testid="row-${S}">${S} row
+        <button data-testid="remove-row" data-interaction-removes>Remove</button></li>
+    </ul>
+    <button data-testid="discard" data-interaction-removes="banner-${S}">Discard</button>
+    <div data-testid="banner-${S}">${S} banner</div>
+    <div data-testid="conn-${S}" data-state="${S}-off">${S} connection</div>
+    <button data-testid="connect" data-interaction-sets="conn-${S}:data-state=${S}-on">Connect</button>
+    <input data-testid="field-${S}" id="field" value="${S} old value">
+    <button data-testid="save-profile" data-interaction-saves="field-${S}">Save</button>
+    <script>
+      const by = (id) => document.querySelector('[data-testid="' + id + '"]');
+      by("remove-row").addEventListener("click", () => fetch("/api/remove", { method: "POST" }));
+      by("discard").addEventListener("click", () => { by("banner-${S}").remove(); return fetch("/api/discard", { method: "POST" }); });
+      by("connect").addEventListener("click", async () => {
+        await fetch("/api/connect", { method: "POST" });
+        by("conn-${S}").dataset.state = "${S}-on";
+      });
+      by("save-profile").addEventListener("click", () => fetch("/api/save", { method: "POST" }));
+    </script>`;
+  await openPage(page, body);
+  await init(page, { clickSettleMs: 100 });
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await page.fill("#field", `${S} typed value`);
+  const settledCount = async () => events(await output(page)).filter((e) => e.type === "ui.click.settled").length;
+  for (const [i, id] of ["remove-row", "discard", "connect", "save-profile"].entries()) {
+    await page.click(`[data-testid="${id}"]`);
+    await expect.poll(settledCount).toBe(i + 1);
+  }
+  const first = await output(page);
+  const stored = (await page.evaluate(() => sessionStorage.getItem("codepress-interactions:effects")))!;
+  // Discard, Connect and Save held at settle and wait for the next load.
+  expect(JSON.parse(stored)).toHaveLength(3);
+  const storage = await page.evaluate(() => JSON.stringify(Object.entries(sessionStorage)));
+  await page.reload();
+  await init(page, { clickSettleMs: 100 });
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await expect.poll(async () => events(await output(page)).filter((e) => e.type === "ui.finding" && e.data.check === "click.effect_not_applied").length).toBe(3);
+  const second = await output(page);
+  expectValid(first);
+  expectValid(second);
+  const checks = (out: typeof first) =>
+    events(out).filter((e) => e.type === "ui.finding" && e.data.check === "click.effect_not_applied").map((e) => e.data.control_id).sort();
+  expect(checks(first)).toEqual(["remove-row"]);
+  expect(checks(second)).toEqual(["connect", "discard", "save-profile"]);
+  const sent = [first, second].flatMap((out) => [...out.serialized, ...out.snapshots.map((s) => s.serialized)]).join("\n");
+  for (const text of [sent, storage]) {
+    expect(text.toLowerCase()).not.toContain(S.toLowerCase());
+    expect(text).not.toContain("typed");
+    expect(text).not.toContain("old value");
+  }
+  // The stored hashes and salt stay in the page.
+  const hashes = stored.match(/[0-9a-f]{32}/g) ?? [];
+  expect(hashes.length).toBeGreaterThanOrEqual(6);
+  for (const digest of hashes) expect(sent, digest).not.toContain(digest);
+});

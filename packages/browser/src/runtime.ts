@@ -1,5 +1,6 @@
 import { ClickEffects } from "./click-effects";
-import { checkEvents, checkSnapshot, focusIndicatorFindings, sortFindings } from "./detect/index";
+import { checkEvents, checkSnapshot, effectFindings, focusIndicatorFindings, sortFindings } from "./detect/index";
+import { EffectContracts } from "./effect-contract";
 import type { TimelineEvent } from "./detect/timeline";
 import { resolveOptions, toFindingData, type CheckName, type Finding } from "./detect/types";
 import type { SnapshotBody } from "./format";
@@ -136,6 +137,7 @@ export class Runtime {
   private timeoutMs: number;
   private perf = new PerfSignals();
   private clicks?: ClickEffects;
+  private effects?: EffectContracts;
   private hovers?: HoverEffects;
   private motion?: MotionTracker;
   private triggers?: SnapshotTriggers;
@@ -357,6 +359,34 @@ export class Runtime {
           },
         })
       : undefined;
+    // Effect contracts are checked only when their finding can be sent.
+    this.effects =
+      this.findingsEnabled && this.checkOn("effect_not_applied")
+        ? new EffectContracts({
+            root: this.root,
+            settleMs: numberOption(this.options.clickSettleMs, 500, 60000),
+            route: () => this.route(),
+            snapshotHash: () => this.currentHash,
+            emit: (observation) => {
+              if (!this.active) return;
+              try {
+                this.emitFindings(effectFindings(observation, this.options.detect));
+              } catch {
+                /* A check failing must never affect capture. */
+              }
+            },
+          })
+        : undefined;
+    // The next load looks at what an earlier one left after each settled
+    // snapshot; without snapshots, once the route has had time to settle.
+    if (this.effects) {
+      const effects = this.effects;
+      this.removals.push(() => effects.stop());
+      if (!this.snapshotsEnabled) {
+        const timer = setTimeout(() => effects.settled(), numberOption(this.options.routeSettleMs, 1000, 60000));
+        this.removals.push(() => clearTimeout(timer));
+      }
+    }
     this.clicks = new ClickEffects({
       root: this.root,
       settleMs: numberOption(this.options.clickSettleMs, 500, 60000),
@@ -370,6 +400,7 @@ export class Runtime {
           : Promise.resolve(null),
       emit: (id, data: ClickSettledData) =>
         this.record("ui.click.settled", id, data, "inferred"),
+      effects: this.effects,
     });
     this.clicks.start();
     this.removals.push(() => this.clicks?.stop());
@@ -744,7 +775,7 @@ export class Runtime {
     const requestLabel = this.label(url, init);
     const started = performance.now();
     this.record("request.started", id, { request_label: requestLabel });
-    const done = this.clicks?.requestStarted() ?? (() => {});
+    const done = this.requestDone();
     let request: Promise<Response>;
     try {
       request = this.originalFetch.call(window, input, modified);
@@ -789,6 +820,16 @@ export class Runtime {
         throw error;
       },
     );
+  }
+
+  /** Tells click follow-through and effect contracts that an observed request started; returns its completion callback. */
+  private requestDone(): (failed: boolean) => void {
+    const click = this.clicks?.requestStarted();
+    const effect = this.effects?.requestStarted();
+    return (failed) => {
+      click?.(failed);
+      effect?.();
+    };
   }
 
   /** Counts window.open during a click as opening a new tab (no DOM change is the expected effect). */
@@ -953,7 +994,7 @@ export class Runtime {
           }
           const requestLabel = runtime.label(url, undefined);
           runtime.record("request.started", id, { request_label: requestLabel });
-          const done = runtime.clicks?.requestStarted() ?? (() => {});
+          const done = runtime.requestDone();
           this.addEventListener(
             "loadend",
             () => {
@@ -1066,6 +1107,13 @@ export class Runtime {
       deduplicated,
     };
     this.lastSnapshot = summary;
+    // Expectations an earlier load left are looked at after every settled snapshot.
+    if (this.effects) {
+      const effects = this.effects;
+      void idle().then(() => {
+        if (this.active) effects.settled();
+      });
+    }
     if (deduplicated) {
       this.snapshotStats.deduplicated++;
       return summary;
