@@ -1,5 +1,6 @@
 import { ClickEffects } from "./click-effects";
-import { checkEvents, checkSnapshot, focusIndicatorFindings, sortFindings } from "./detect/index";
+import { checkEvents, checkSnapshot, effectFindings, focusIndicatorFindings, sortFindings } from "./detect/index";
+import { EffectContracts } from "./effect-contract";
 import type { TimelineEvent } from "./detect/timeline";
 import { resolveOptions, toFindingData, type CheckName, type Finding } from "./detect/types";
 import type { SnapshotBody } from "./format";
@@ -136,6 +137,7 @@ export class Runtime {
   private timeoutMs: number;
   private perf = new PerfSignals();
   private clicks?: ClickEffects;
+  private effects?: EffectContracts;
   private hovers?: HoverEffects;
   private motion?: MotionTracker;
   private triggers?: SnapshotTriggers;
@@ -357,6 +359,29 @@ export class Runtime {
           },
         })
       : undefined;
+    // Effect contracts are checked only when their finding can be sent.
+    this.effects =
+      this.findingsEnabled && this.checkOn("effect_not_applied")
+        ? new EffectContracts({
+            root: this.root,
+            route: () => this.route(),
+            snapshotHash: () => this.currentHash,
+            emit: (observation) => {
+              if (!this.active) return;
+              try {
+                this.emitFindings(effectFindings(observation, this.options.detect));
+              } catch {
+                /* A check failing must never affect capture. */
+              }
+            },
+          })
+        : undefined;
+    // The next load re-checks what an earlier one left after its first settled
+    // snapshot; without snapshots, once the route has had time to settle.
+    if (this.effects && !this.snapshotsEnabled) {
+      const timer = setTimeout(() => this.effects?.recheck(), numberOption(this.options.routeSettleMs, 1000, 60000));
+      this.removals.push(() => clearTimeout(timer));
+    }
     this.clicks = new ClickEffects({
       root: this.root,
       settleMs: numberOption(this.options.clickSettleMs, 500, 60000),
@@ -370,6 +395,7 @@ export class Runtime {
           : Promise.resolve(null),
       emit: (id, data: ClickSettledData) =>
         this.record("ui.click.settled", id, data, "inferred"),
+      effects: this.effects,
     });
     this.clicks.start();
     this.removals.push(() => this.clicks?.stop());
@@ -1077,6 +1103,12 @@ export class Runtime {
     this.record("ui.snapshot", null, data);
     this.perf.countContrastUnknown(result.contrastUnknown);
     this.runSnapshotChecks(body, sha256);
+    if (this.effects) {
+      const effects = this.effects;
+      void idle().then(() => {
+        if (this.active) effects.recheck();
+      });
+    }
     // The first screen also reports which performance signals this browser has.
     if (!this.reportedSignals) this.recordPerf(true);
     if (this.snapshotQueue.length >= MAX_PENDING_SNAPSHOTS) {

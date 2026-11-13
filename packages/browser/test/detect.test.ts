@@ -12,6 +12,7 @@ import {
   formatFinding,
   sha256HexSync,
   findingTier,
+  effectFindings,
   focusIndicatorFindings,
   hoverOnlyFindings,
   involvesControl,
@@ -696,6 +697,73 @@ describe("click checks", () => {
       // No follow-through at all cannot say: reported, with feedback unknown.
       expect(rage([snap(), start(0), start(300), start(600)])[0].evidence).toMatchObject({ clicks_with_feedback: null, clicks_settled: 0 });
     });
+  });
+});
+
+describe("effect contracts", () => {
+  const base = {
+    control_id: "remove-invite",
+    route_template: "/settings",
+    viewport_width: 1280,
+    viewport_height: 800,
+    snapshot_sha256: null,
+    interaction_id: "00000000-0000-4000-8000-000000000001",
+    expected_removed: 1,
+    expected_added: null,
+    state_held: null,
+    fields_saved: null,
+    fields_reverted: null,
+    present_at_settle: false,
+    vanished_then_returned: false,
+    present_after_reload: null,
+    matches: 0,
+    request_count: 1,
+    request_failed_count: 0,
+    first_feedback_ms: 40,
+    settle_ms: 300,
+    dialog_opened: false,
+  };
+
+  it("reports a removal target still present, vanished and back, or back after a reload", () => {
+    for (const change of [{ present_at_settle: true }, { vanished_then_returned: true }, { present_after_reload: true }]) {
+      const [finding] = effectFindings({ ...base, effect: 1, ...change });
+      expect(finding).toMatchObject({
+        type: "effect_not_applied",
+        check: "click.effect_not_applied",
+        check_version: 1,
+        control_id: "remove-invite",
+        subject: null,
+        other: null,
+        interaction_id: base.interaction_id,
+      });
+      expect(finding.evidence).toMatchObject({ effect: 1, expected_removed: 1, ...change, request_count: 1, dialog_opened: false });
+      // Numbers and booleans only.
+      for (const value of Object.values(finding.evidence)) expect(["number", "boolean", "object"]).toContain(typeof value);
+    }
+    expect(effectFindings({ ...base, effect: 1 })).toEqual([]);
+  });
+
+  it("judges adds, sets and saves by their own evidence", () => {
+    expect(effectFindings({ ...base, effect: 2, present_at_settle: false })).toHaveLength(1);
+    expect(effectFindings({ ...base, effect: 2, present_at_settle: true })).toEqual([]);
+    expect(effectFindings({ ...base, effect: 2, present_at_settle: null, present_after_reload: false })).toHaveLength(1);
+    expect(effectFindings({ ...base, effect: 3, state_held: false })).toHaveLength(1);
+    expect(effectFindings({ ...base, effect: 3, state_held: true })).toEqual([]);
+    expect(effectFindings({ ...base, effect: 4, fields_saved: 2, fields_reverted: 1 })).toHaveLength(1);
+    expect(effectFindings({ ...base, effect: 4, fields_saved: 2, fields_reverted: 0 })).toEqual([]);
+  });
+
+  it("never judges a click that opened a dialog, and honours detect.checks", () => {
+    expect(effectFindings({ ...base, effect: 1, present_at_settle: true, dialog_opened: true })).toEqual([]);
+    expect(effectFindings({ ...base, effect: 1, present_at_settle: true }, { checks: ["dead_click"] })).toEqual([]);
+  });
+
+  it("fingerprints check, route, band and control only", () => {
+    const one = effectFindings({ ...base, effect: 1, present_at_settle: true })[0];
+    const two = effectFindings({ ...base, effect: 1, present_after_reload: true, viewport_width: 1300, request_count: 4 })[0];
+    expect(one.fingerprint).toBe(two.fingerprint);
+    expect(one.fingerprint).toBe(fingerprint("effect_not_applied", "/settings", "1024-1439", ["remove-invite"]));
+    expect(effectFindings({ ...base, effect: 1, present_at_settle: true, viewport_width: 390 })[0].fingerprint).not.toBe(one.fingerprint);
   });
 });
 

@@ -13,6 +13,7 @@ import { timelineFindings, type TimelineEvent } from "./timeline";
 import { CHECK_NAMES, resolveOptions, type DetectOptions, type Finding, type FindingData } from "./types";
 
 export { focusIndicatorFindings, hoverOnlyFindings, type FocusObservation, type HoverFocusObservation } from "./a11y";
+export { EFFECTS, effectFailed, effectFindings, type EffectKind, type EffectObservation } from "./effect";
 export { CHECK_IDS, CHECK_NAMES, CHECK_VERSION, toFindingData } from "./types";
 export type { CheckName, DetectOptions, ElementRef, Evidence, Finding, FindingData } from "./types";
 export type { TimelineEvent } from "./timeline";
