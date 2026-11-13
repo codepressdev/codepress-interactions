@@ -105,6 +105,11 @@ export class ClickEffects {
     return this.follow.current;
   }
 
+  /** The open click's interaction ID: a request started now belongs to it (inferred). */
+  openInteractionId(): string | null {
+    return this.current?.id ?? null;
+  }
+
   start(): void {
     this.active = true;
     const onFocus = (event: Event) => {

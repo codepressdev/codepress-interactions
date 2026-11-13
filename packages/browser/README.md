@@ -73,7 +73,7 @@ await interactions.runAction("transfer.confirm", async (context) => {
 });
 ```
 
-`runAction` sets context only during the callback's synchronous invocation. Ordinary fetch/XHR calls during that synchronous portion inherit the action. After `await`, a timer or another callback, use the supplied `context.fetch` to preserve the known link. Ordinary unbound fetch after an await and independent polling remain unlinked. This avoids global async context leaking between overlapping actions. Business callback return values, thrown errors, and rejected promises remain unchanged. Existing `X-Trace-Id` is preserved; raw headers are never recorded. Ingestion and unconfigured third-party origins are never instrumented or sent correlation headers.
+`runAction` sets context only during the callback's synchronous invocation. Ordinary fetch/XHR calls during that synchronous portion inherit the action. After `await`, a timer or another callback, use the supplied `context.fetch` to preserve the known link. Outside an action, a fetch or XHR to an allowed origin that starts while a click is still open (from the click until it settles, the same window that counts the click's `request_count`) belongs to that click: its request events carry the click's `interaction_id` with `attribution: "inferred"`, and it is sent the correlation header, so a backend can link its work to the click. Requests after the click settles, and requests while no click is open, remain unlinked. This avoids global async context leaking between overlapping actions. Business callback return values, thrown errors, and rejected promises remain unchanged. Existing `X-Trace-Id` is preserved; raw headers are never recorded. Ingestion and unconfigured third-party origins are never instrumented or sent correlation headers.
 
 ## Lifecycle and bounds
 
@@ -313,7 +313,7 @@ const sink: InteractionSink = {
 | `routeTemplate(url)` | every path segment `:id` unless in `routeSegments`; no query or hash | Return a bounded route label such as `/orders/[id]`. Values with a query or unsafe characters are dropped. |
 | `testId(value, element)` | `defaultTestIdFilter` | Which test IDs are recorded; see [Test IDs and privacy](#test-ids-and-privacy). |
 | `requestLabel(url, init)` | none | Bounded static label for an observed request (`[A-Za-z0-9_.:/-]`, 64 characters). |
-| `propagateHeader` | `X-Interaction-Id` | Correlation header name for allowed origins; `false` sends none. A readable `X-Trace-Id` response header is recorded. |
+| `propagateHeader` | `X-Interaction-Id` | Correlation header name, sent only to `allowedApiOrigins` on requests made in an action or while a click is open; `false` sends none. A readable `X-Trace-Id` response header is recorded. |
 | `snapshots` | `true` | Turn screen snapshots off. |
 | `maxElements` | 5000 (max 50,000) | Elements per snapshot before `truncated`. |
 | `maxSliceMs` | 6 (max 50) | Main-thread time per walk slice. |
