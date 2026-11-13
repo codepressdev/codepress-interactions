@@ -36,7 +36,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/quantfive/codepress-interactions.git",
+    "url": "git+https://github.com/codepressdev/codepress-interactions.git",
     "directory": "packages/react"
   },
   "publishConfig": {
