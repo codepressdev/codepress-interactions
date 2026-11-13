@@ -4,6 +4,14 @@ The three npm packages (`@codepress/interactions-browser`, `@codepress/interacti
 
 The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 
+## 1.4.0
+
+`@codepress/interactions-browser` only; the React and Playwright packages are unchanged and accept it through their `^1.3.0` dependency. No check changed meaning, so `check_version` stays 1. Protocol v2: no change (`attribution: "inferred"` was already allowed on request events).
+
+### Changed
+
+- A fetch or XHR to an origin in `allowedApiOrigins` that starts while a click is still open, outside any `runAction`, now belongs to that click. Its `request.started` and `request.completed` events carry the click's `interaction_id` with `attribution: "inferred"` (before: `null` and `"unknown"`), and when `propagateHeader` is on (the default) it is sent `X-Interaction-Id`, so a backend can record its requests and jobs under the click. The window is the one that already counts the click's `request_count`: from the click until it settles. An action's explicit ID and a header the page set itself still win. Requests to any other origin are never instrumented or sent the header; requests after the click settles, and polling while no click is open, stay unlinked. An API origin you add to `allowedApiOrigins` must allow `X-Interaction-Id` in its CORS configuration, as the README already asked; set `propagateHeader: false` to keep the old wire behavior.
+
 ## 1.3.0
 
 `@codepress/interactions-browser`, `@codepress/interactions-playwright` and `@codepress/interactions-react`, released together. The React and Playwright packages have no code change of their own; they are bumped so their re-exported types (`InteractionOptions`, `CheckName`) carry the new check name and their dependency asks for browser 1.3.0. No existing check changed meaning, so `check_version` stays 1. Pages without the new markup behave as on 1.2.

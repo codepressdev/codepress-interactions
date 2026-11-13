@@ -126,7 +126,7 @@ describe("causal request attribution", () => {
   it("preserves host errors and unknown automatic request attribution", async () => {
     const handle = init();
     document.body.innerHTML = "<button>Click</button>";
-    document.querySelector("button")!.click();
+    // No action and no open click: polling stays unlinked.
     await window.fetch("/api/poll");
     await handle.flush();
     const request = events().find((event) => event.type === "request.started");
@@ -140,6 +140,58 @@ describe("causal request attribution", () => {
         throw new Error("host error");
       }),
     ).toThrow("host error");
+  });
+});
+describe("click window correlation", () => {
+  const clickOptions = { ...options, clickSettleMs: 10, clickTimeoutMs: 200 };
+  const sentTo = (url: string) =>
+    sent.filter((call) => String(call.input) === new URL(url, document.baseURI).href);
+  it("links a request made while a click is open and sends its ID only to allowed origins", async () => {
+    const handle = initInteractions(clickOptions);
+    handles.push(handle);
+    document.body.innerHTML = `<button data-testid="save">Save</button>`;
+    const save = document.querySelector("button")!;
+    let work: Promise<unknown> | undefined;
+    save.addEventListener("click", () => {
+      // Async, like a mutation: no action context, only the open click.
+      work = Promise.resolve().then(() =>
+        Promise.all([
+          window.fetch("/api/save", { method: "POST" }),
+          window.fetch("https://third-party.test/pixel"),
+        ]),
+      );
+    });
+    save.click();
+    await work;
+    await handle.flush();
+
+    const clickId = events().find((event) => event.type === "interaction.started").interaction_id;
+    expect(clickId).toMatch(/^[0-9a-f-]{36}$/);
+    const [request] = sentTo("/api/save");
+    expect(new Headers(request.init?.headers).get("X-Interaction-Id")).toBe(clickId);
+    const requests = events().filter((event) => event.type.startsWith("request."));
+    expect(requests.map((event) => [event.type, event.interaction_id, event.attribution])).toEqual([
+      ["request.started", clickId, "inferred"],
+      ["request.completed", clickId, "inferred"],
+    ]);
+    // Never to an origin outside allowedApiOrigins: the third party gets the host's
+    // own call, untouched. (After the click settles a request is unlinked again; the
+    // settle needs a real browser, so test/e2e/clicks.spec.ts covers it.)
+    const [thirdParty] = sentTo("https://third-party.test/pixel");
+    expect(thirdParty.init).toBeUndefined();
+  });
+  it("keeps an action's explicit ID and sends no header when propagation is off", async () => {
+    const handle = initInteractions({ ...clickOptions, propagateHeader: false });
+    handles.push(handle);
+    document.body.innerHTML = `<button data-testid="save">Save</button>`;
+    const save = document.querySelector("button")!;
+    save.addEventListener("click", () => void window.fetch("/api/quiet"));
+    save.click();
+    await handle.flush();
+    const [quiet] = sentTo("/api/quiet");
+    expect(new Headers(quiet.init?.headers).has("X-Interaction-Id")).toBe(false);
+    const started = events().find((event) => event.type === "request.started");
+    expect(started.attribution).toBe("inferred");
   });
 });
 describe("transport", () => {

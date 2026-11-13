@@ -75,10 +75,59 @@ test("click follow-through reports feedback, requests, settle time and before/af
     settle_ms: 0,
   });
   expect(open.data).toMatchObject({ dialog_opened: true, focus_moved: true });
-  // Request events themselves stay unattributed: the click link is only inferred.
+  // A request made while the click is open belongs to it (inferred) and carries its ID.
+  const saveId = started.find((e) => e.data.control_id === "save").interaction_id;
   const request = events(out).find((e) => e.type === "request.started");
-  expect(request.interaction_id).toBeNull();
-  expect(request.attribution).toBe("unknown");
+  expect(request.interaction_id).toBe(saveId);
+  expect(request.attribution).toBe("inferred");
+});
+
+test("a click's requests carry its ID to allowed origins only, and later requests carry none", async ({ page }) => {
+  const seen: Record<string, string | undefined> = {};
+  await openPage(
+    page,
+    `<button data-testid="save" id="save">Save</button>
+    <script>
+      document.getElementById("save").addEventListener("click", async () => {
+        await new Promise((r) => setTimeout(r, 20));
+        await fetch("/api/save", { method: "POST" });
+        const x = new XMLHttpRequest();
+        x.open("GET", "/api/xhr");
+        x.send();
+        await fetch("https://third-party.test/pixel").catch(() => {});
+      });
+    </script>`,
+    {
+      api: async (route) => {
+        seen[new URL(route.request().url()).pathname] =
+          route.request().headers()["x-interaction-id"];
+        await route.fulfill({ contentType: "application/json", body: "{}" });
+      },
+    },
+  );
+  // A CORS request, so a correlation header would really be sent (no-cors strips it).
+  const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*" };
+  await page.route("https://third-party.test/**", async (route) => {
+    const headers = route.request().headers();
+    if (route.request().method() === "OPTIONS")
+      seen.thirdPreflight = headers["access-control-request-headers"];
+    else seen.third = headers["x-interaction-id"] ?? "absent";
+    await route.fulfill({ status: 200, headers: cors, body: "" });
+  });
+  await init(page, { clickSettleMs: 150 });
+  await page.click("#save");
+  await expect.poll(async () => settled(await output(page)).length).toBe(1);
+  await expect.poll(() => seen.third).toBe("absent");
+  expect(seen.thirdPreflight).toBeUndefined();
+  await page.evaluate(() => fetch("/api/later"));
+  await expect.poll(() => "/api/later" in seen).toBe(true);
+
+  const out = await output(page);
+  expectValid(out);
+  const clickId = events(out).find((e) => e.type === "interaction.started").interaction_id;
+  expect(seen["/api/save"]).toBe(clickId);
+  expect(seen["/api/xhr"]).toBe(clickId);
+  expect(seen["/api/later"]).toBeUndefined();
 });
 
 test("a second click before settling marks the first overlapped without sharing counts", async ({ page }) => {

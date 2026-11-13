@@ -738,6 +738,16 @@ export class Runtime {
     }
   }
 
+  /**
+   * With no action context, a request to an allowed origin started while a click is
+   * still open belongs to that click (the same window that counts its requests), and
+   * carries its ID so the backend can link its work. Attribution is `inferred`.
+   */
+  private openClick(): [string | null, "inferred" | undefined] {
+    const open = this.clicks?.openInteractionId() ?? null;
+    return open ? [open, "inferred"] : [null, undefined];
+  }
+
   private instrumentFetch(
     input: RequestInfo | URL,
     init: RequestInit | undefined,
@@ -763,25 +773,29 @@ export class Runtime {
     const url = this.requestUrl(target);
     if (!url) return this.originalFetch.call(window, input, init);
     let modified = init;
+    let attribution: "inferred" | undefined;
     try {
       const headers = new Headers(init?.headers ?? inheritedHeaders);
       if (headers.has(this.readHeader))
         id = validInteractionId(headers.get(this.readHeader));
-      else if (id && this.header) headers.set(this.header, id);
+      else {
+        if (!id) [id, attribution] = this.openClick();
+        if (id && this.header) headers.set(this.header, id);
+      }
       modified = { ...init, headers };
     } catch {
       return this.originalFetch.call(window, input, init);
     }
     const requestLabel = this.label(url, init);
     const started = performance.now();
-    this.record("request.started", id, { request_label: requestLabel });
+    this.record("request.started", id, { request_label: requestLabel }, attribution);
     const done = this.requestDone();
     let request: Promise<Response>;
     try {
       request = this.originalFetch.call(window, input, modified);
     } catch (error) {
       done(true);
-      this.record("request.completed", id, { outcome: "error", request_label: requestLabel });
+      this.record("request.completed", id, { outcome: "error", request_label: requestLabel }, attribution);
       throw error;
     }
     return request.then(
@@ -800,7 +814,7 @@ export class Runtime {
             duration_ms: clampMs(performance.now() - started),
             trace_id: traceId,
             request_label: requestLabel,
-          });
+          }, attribution);
         } catch {
           /* The host's response is returned regardless. */
         }
@@ -813,7 +827,7 @@ export class Runtime {
             outcome: "error",
             duration_ms: clampMs(performance.now() - started),
             request_label: requestLabel,
-          });
+          }, attribution);
         } catch {
           /* The host's error is rethrown regardless. */
         }
@@ -981,10 +995,12 @@ export class Runtime {
       const url = runtime.active && entry && !runtime.sinkDepth ? runtime.requestUrl(entry.url) : null;
       if (entry && url) {
         try {
-          const id =
+          const [id, attribution] =
             entry.interactionHeader !== null
-              ? validInteractionId(entry.interactionHeader)
-              : runtime.context;
+              ? [validInteractionId(entry.interactionHeader), undefined]
+              : runtime.context
+                ? [runtime.context, undefined]
+                : runtime.openClick();
           const started = performance.now();
           try {
             if (id && entry.interactionHeader === null && runtime.header)
@@ -993,7 +1009,7 @@ export class Runtime {
             /* Keep host request usable. */
           }
           const requestLabel = runtime.label(url, undefined);
-          runtime.record("request.started", id, { request_label: requestLabel });
+          runtime.record("request.started", id, { request_label: requestLabel }, attribution);
           const done = runtime.requestDone();
           this.addEventListener(
             "loadend",
@@ -1007,7 +1023,7 @@ export class Runtime {
                   duration_ms: clampMs(performance.now() - started),
                   trace_id: xhrTraceId(this),
                   request_label: requestLabel,
-                });
+                }, attribution);
               } catch {
                 /* ignore */
               }
