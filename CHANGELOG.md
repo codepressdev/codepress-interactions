@@ -4,6 +4,17 @@ The three npm packages (`@codepress/interactions-browser`, `@codepress/interacti
 
 The Python SDK in `python/` is versioned separately and is not covered by 1.0.
 
+## 1.5.0
+
+`@codepress/interactions-browser` only; the React and Playwright packages are unchanged and accept it through their `^1.3.0` dependency. No check changed meaning and no check was added, so `check_version` stays 1. Protocol v2: additive optional fields only.
+
+### Added
+
+- Snapshot bodies record UI state in a sparse `state` table: row and bitmask (`legend.state`) of `current`, `selected`, `expanded`, `pressed`, `checked`, `disabled`, `invalid`, `busy`, `open` and `links_here` (a same-origin link whose path, trailing slash dropped except for `/`, is the page's). Only rows with a bit set, at most 10,000, with `state.truncated`. A page without state has neither the table nor `legend.state`, so its body is shaped exactly as in 1.4.0.
+- `ui.click.settled` carries `state_changes`, `clicked_state_changed`, `state_reverted`, `marked_before`, `marked_after` (current or selected items in the control's nearest nav, tablist, menu, menubar, listbox or radiogroup, else landmark; absent outside one), `links_here_after` and `links_here_marked_after`. Counts and booleans only. A nav link that lands on its page with nothing marked current reads as `links_here_after` ≥ 1 and `links_here_marked_after` 0.
+- `STATE` export (the bit values). Attribute values, hrefs and paths are read in the page to work out the bits and never leave it.
+- The click observer also watches `aria-current`, `aria-invalid`, `aria-disabled` and `checked`, so a change to those is now an effect of the click (it counts in `mutation_count` and `first_feedback_ms`, and keeps the window open until quiet).
+
 ## 1.4.0
 
 `@codepress/interactions-browser` only; the React and Playwright packages are unchanged and accept it through their `^1.3.0` dependency. No check changed meaning, so `check_version` stays 1. Protocol v2: no change (`attribution: "inferred"` was already allowed on request events).

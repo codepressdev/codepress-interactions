@@ -3,13 +3,14 @@
  * geometry and layout facts in a columnar body. Never records text, values,
  * attributes other than role/test IDs, URLs or HTML.
  */
-import { FLAGS, HIT_POINTS, POSITIONS, THEMES, type SnapshotBody, type Theme } from "./format";
+import { FLAGS, HIT_POINTS, POSITIONS, STATE, THEMES, type SnapshotBody, type Theme } from "./format";
+import { herePath, MAX_STATE_ROWS, stateBits } from "./state";
 import { blends, namedFromContent, paint, paintsOwnLayer, rootBackdrop, unnamedControl, UNMEASURED, type Backdrop } from "./a11y";
 import { composite, floorRatio, luminance, luminanceOf, parseColor, ratioOf } from "./color";
 import type { SnapshotTrigger } from "./types";
 import { elementTestId, now, type TestIdFilter } from "./util";
 
-export { FLAGS, HIT_POINTS, POSITIONS, THEMES } from "./format";
+export { FLAGS, HIT_POINTS, POSITIONS, STATE, THEMES } from "./format";
 export type { SnapshotBody } from "./format";
 
 export interface SnapshotSummary {
@@ -238,6 +239,8 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
   };
   const contrast: NonNullable<SnapshotBody["contrast"]> = { element: [], ratio: [], font_px: [], bold: [] };
   const unnamed: NonNullable<SnapshotBody["unnamed_controls"]> = { element: [], has_title: [], icon_only: [] };
+  const state: NonNullable<SnapshotBody["state"]> = { element: [], bits: [], truncated: false };
+  const here = herePath();
   const candidates: ContrastCandidate[] = [];
   const painters: Painter[] = [];
   let contrastUnknown = 0;
@@ -389,6 +392,17 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
       !!(element as HTMLImageElement).currentSrc
     )
       flags |= FLAGS.broken_image;
+
+    // UI state: bits only; the attribute values and hrefs read here are never recorded.
+    if (!ignored) {
+      const bits = stateBits(element, here, popoverOpen);
+      if (bits) {
+        if (state.element.length < MAX_STATE_ROWS) {
+          state.element.push(index);
+          state.bits.push(bits);
+        } else state.truncated = true;
+      }
+    }
 
     let textLength = 0;
     if (!ignored && !opaque && visible) textLength = measureText(element, index, text);
@@ -578,7 +592,8 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     element_count: elements.parent.length,
     truncated,
     torn,
-    legend: { position: POSITIONS, flags: FLAGS, hit_points: HIT_POINTS },
+    // The state legend is sent only with a state table: a body without state is shaped as before 1.5.0.
+    legend: { position: POSITIONS, flags: FLAGS, hit_points: HIT_POINTS, ...(state.element.length ? { state: STATE } : {}) },
     dictionaries: { tag: tags.values, role: roles.values, test_id: testIds.values },
     elements,
     text_boxes: text,
@@ -587,6 +602,7 @@ export async function walkSnapshot(options: WalkOptions): Promise<WalkResult | n
     // A table is absent when its measurement is off: absent means not measured, not none found.
     ...(maxContrast > 0 ? { contrast } : {}),
     ...(measureNames ? { unnamed_controls: unnamed } : {}),
+    ...(state.element.length ? { state } : {}),
   };
   return {
     body,
@@ -958,12 +974,21 @@ function truncateBody(body: SnapshotBody, keep: number): SnapshotBody {
   const c = contrast ? before(contrast.element, keep) : 0;
   const unnamed = body.unnamed_controls;
   const u = unnamed ? before(unnamed.element, keep) : 0;
+  const state = body.state;
+  const s = state ? before(state.element, keep) : 0;
   const hitKeep = hits.element.findIndex((index) => index >= keep);
   const h = hitKeep === -1 ? hits.element.length : hitKeep;
   const allow = body.allow_overlap;
   const allowKeep = allow ? allow.element.map((row, i) => row < keep && allow.other[i] < keep) : [];
+  let legend = body.legend;
+  if (legend.state && !s) {
+    const { state: _dropped, ...rest } = legend;
+    legend = rest;
+  }
+  const { state: _state, ...rest } = body;
   return {
-    ...body,
+    ...rest,
+    legend,
     element_count: keep,
     truncated: true,
     elements,
@@ -1008,6 +1033,9 @@ function truncateBody(body: SnapshotBody, keep: number): SnapshotBody {
             icon_only: unnamed.icon_only.slice(0, u),
           },
         }
+      : {}),
+    ...(state && s
+      ? { state: { element: state.element.slice(0, s), bits: state.bits.slice(0, s), truncated: state.truncated } }
       : {}),
   };
 }

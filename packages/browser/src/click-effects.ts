@@ -7,6 +7,8 @@ import type { EffectContracts, EffectWatch } from "./effect-contract";
 import { DIALOGS, Follower, observeOptions, scanAdded, type FollowWindow } from "./follow";
 import type { PerfSignals, SignalCounters } from "./perf";
 import { INTERACTIVE } from "./snapshot";
+import { STATE } from "./format";
+import { attributeOn, GROUP, groupOf, linksHereIn, markedIn, STATE_ATTRIBUTES, stateBits, statefulIn } from "./state";
 import type { ClickEndReason, ClickSettledData } from "./types";
 import { clampMs, now } from "./util";
 
@@ -61,7 +63,24 @@ interface ClickWindow extends FollowWindow {
   laterInput: boolean;
   /** The clicked control's effect contract, when it declares one. */
   effect: EffectWatch | null;
+  /** The clicked control's (or target's) state bits when the click began. */
+  clickedBefore: number;
+  /** The control's nearest group, its position among groups, and its marked items when the click began. */
+  group: Element | null;
+  groupIndex: number;
+  markedBefore: number | null;
+  /** Elements added or removed while the click was open: whether each was in the page when it began. */
+  moved: Map<Element, boolean>;
+  /**
+   * Per element and state attribute (from the observer's old values): the value
+   * before the first change, and whether a later change saw it on or off differently.
+   */
+  attributeTrack: Map<Element, Map<string, { value: string | null; first: boolean; moved: boolean }>>;
 }
+
+/** Bits a click's state comparison looks at: everything but links_here, which moves with the route. */
+const CLAIMED = ~STATE.links_here;
+const STATE_ATTRIBUTE_SET = new Set<string>(STATE_ATTRIBUTES);
 
 const isDialog = (element: Element): boolean => element.matches(DIALOGS);
 
@@ -77,7 +96,8 @@ export class ClickEffects {
   constructor(private host: ClickHost) {
     this.follow = new Follower<ClickWindow, "page_hidden">({
       root: host.root,
-      observe: observeOptions(),
+      // State attributes with their old values, to see a change that reverted before settling.
+      observe: { ...observeOptions(["aria-current", "aria-invalid", "aria-disabled", "checked"]), attributeOldValue: true },
       settleMs: host.settleMs,
       timeoutMs: host.timeoutMs,
       records: (click, records) => {
@@ -94,6 +114,7 @@ export class ClickEffects {
             click.dialogOpened = true;
         }
         if (!click.dialogOpened && scanAdded(records, isDialog)) click.dialogOpened = true;
+        trackState(click, records);
         if (click.effect) this.host.effects?.records(click.effect, records);
         this.effect(click, true);
       },
@@ -217,11 +238,22 @@ export class ClickEffects {
         !sameSelection(this.pressSelection, selectionMark()),
       laterInput: false,
       effect: null,
+      clickedBefore: 0,
+      moved: new Map(),
+      group: null,
+      groupIndex: -1,
+      markedBefore: null,
+      attributeTrack: new Map(),
     };
     try {
       describeTarget(click, event, this.host.root);
     } catch {
       /* Unknown target: reported as not interactive. */
+    }
+    try {
+      stateBegin(click, this.host.root);
+    } catch {
+      /* State that cannot be read is not compared. */
     }
     try {
       click.effect = this.host.effects?.begin(control, event?.target) ?? null;
@@ -330,6 +362,11 @@ export class ClickEffects {
       before_sha256: click.before,
       after_sha256: null,
     };
+    try {
+      Object.assign(data, stateEnd(click, this.host.root));
+    } catch {
+      /* State that cannot be read is left out. */
+    }
     if (click.effect) {
       try {
         this.host.effects?.finish(click.effect, data, reason, click.id);
@@ -357,6 +394,112 @@ export class ClickEffects {
       .catch(() => null)
       .then(report, flush);
   }
+}
+
+/** Most elements a click follows for state: changed attributes, and added or removed subtrees. */
+const MAX_TRACKED = 1000;
+
+/**
+ * Records what a click's state comparison needs from the observer: each state
+ * attribute's value before its first change, and the subtrees added or
+ * removed, with whether each was in the page when the click began (its first
+ * record says). Nothing is scanned on the click path itself.
+ */
+function trackState(click: ClickWindow, records: MutationRecord[]): void {
+  for (let i = 0; i < records.length && i < 256; i++) {
+    const record = records[i];
+    if (record.type === "childList") {
+      const note = (nodes: NodeList, present: boolean) => {
+        for (let j = 0; j < nodes.length && j < 64; j++) {
+          const node = nodes[j];
+          if (node instanceof Element && !click.moved.has(node) && click.moved.size < MAX_TRACKED)
+            click.moved.set(node, present);
+        }
+      };
+      note(record.removedNodes, true);
+      note(record.addedNodes, false);
+      continue;
+    }
+    const name = record.attributeName;
+    if (record.type !== "attributes" || !name || !STATE_ATTRIBUTE_SET.has(name)) continue;
+    const target = record.target as Element;
+    let byName = click.attributeTrack.get(target);
+    if (!byName) {
+      if (click.attributeTrack.size >= MAX_TRACKED) continue;
+      click.attributeTrack.set(target, (byName = new Map()));
+    }
+    const on = attributeOn(name, record.oldValue);
+    const seen = byName.get(name);
+    if (!seen) byName.set(name, { value: record.oldValue, first: on, moved: false });
+    // A later record's old value is the value an earlier change set.
+    else if (on !== seen.first) seen.moved = true;
+  }
+}
+
+/** Reads what a click's state is compared against: the clicked control and its group only. */
+function stateBegin(click: ClickWindow, root: Element): void {
+  const clicked = click.target ?? click.control;
+  click.clickedBefore = stateBits(clicked, null) & CLAIMED;
+  const group = groupOf(clicked);
+  if (group && root.contains(group)) {
+    click.group = group;
+    click.groupIndex = Array.prototype.indexOf.call(root.querySelectorAll(GROUP), group);
+    click.markedBefore = markedIn(group);
+  }
+}
+
+/** State fields of ui.click.settled (1.5.0): counts and booleans only. */
+function stateEnd(click: ClickWindow, root: Element): Partial<ClickSettledData> {
+  const clicked = click.target ?? click.control;
+  const inPage = (element: Element) => element.isConnected && root.contains(element);
+  // Was it in the page when the click began? An element under an added or removed subtree takes that subtree's answer.
+  const presentAtBegin = (element: Element): boolean => {
+    for (let at: Element | null = element, steps = 0; at && steps < 256; at = at.parentElement, steps++) {
+      const present = click.moved.get(at);
+      if (present !== undefined) return present;
+    }
+    return inPage(element);
+  };
+  const before = (element: Element): number => {
+    if (element === clicked) return click.clickedBefore;
+    if (!presentAtBegin(element)) return 0;
+    const changed = click.attributeTrack.get(element);
+    const read = changed
+      ? (name: string) => (changed.has(name) ? changed.get(name)!.value : element.getAttribute(name))
+      : undefined;
+    return stateBits(element, null, undefined, read) & CLAIMED;
+  };
+  const after = (element: Element): number => (inPage(element) ? stateBits(element, null) & CLAIMED : 0);
+  const candidates = new Set<Element>(click.attributeTrack.keys());
+  for (const node of click.moved.keys())
+    for (const element of statefulIn(node, MAX_TRACKED)) {
+      if (candidates.size >= 4 * MAX_TRACKED) break;
+      candidates.add(element);
+    }
+  candidates.add(clicked);
+  let changes = 0;
+  for (const element of candidates) if (before(element) !== after(element)) changes++;
+  let reverted = false;
+  for (const [element, byName] of click.attributeTrack)
+    for (const [name, seen] of byName)
+      if (seen.moved && attributeOn(name, element.getAttribute(name)) === seen.first) reverted = true;
+  const out: Partial<ClickSettledData> = {
+    state_changes: Math.min(MAX_COUNT, changes),
+    clicked_state_changed: after(clicked) !== click.clickedBefore,
+    state_reverted: reverted,
+  };
+  if (click.markedBefore !== null) {
+    // A group replaced while the click was open is found again by its position among groups.
+    let group: Element | null = click.group;
+    if (!group || !inPage(group))
+      group = click.groupIndex >= 0 ? root.querySelectorAll(GROUP)[click.groupIndex] ?? null : null;
+    out.marked_before = click.markedBefore;
+    if (group) out.marked_after = markedIn(group);
+  }
+  const links = linksHereIn(root);
+  out.links_here_after = links.links;
+  out.links_here_marked_after = links.marked;
+  return out;
 }
 
 const isField = (node: Node): node is Element => node instanceof Element && node.matches(FIELD);
