@@ -186,6 +186,21 @@ describe("click state fields", () => {
     expect(data.marked_before).toBeUndefined();
   });
 
+  it("a re-rendered nav: removed and added elements count by their state, and the new nav is found again", async () => {
+    document.body.innerHTML = `<header></header><nav id="old"><a id="home" href="/" aria-current="page">Home</a><a id="foo" href="/foo">Foo</a></nav>`;
+    start();
+    const foo = document.getElementById("foo")!;
+    clicks.begin("c1", "foo", foo, new MouseEvent("click"));
+    document.getElementById("old")!.replaceWith(
+      Object.assign(document.createElement("nav"), {
+        innerHTML: `<a href="/">Home</a><a href="/foo" aria-current="page">Foo</a><button aria-pressed="false">x</button>`,
+      }),
+    );
+    const data = await settled();
+    // The old Home (current) went away and the new Foo (current) came: two changes; the clicked link left with no state.
+    expect(data).toMatchObject({ state_changes: 2, clicked_state_changed: false, marked_before: 1, marked_after: 1 });
+  });
+
   it("links here after a click: counted, and whether they are marked", async () => {
     document.body.innerHTML = `<nav><a id="home" href="/" aria-current="page">Home</a><a id="foo" href="/foo/">Foo</a></nav>`;
     start();

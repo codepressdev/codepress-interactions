@@ -14,11 +14,26 @@ export const STATE_ATTRIBUTES = [
   "aria-disabled", "aria-invalid", "aria-busy", "open", "disabled", "checked",
 ] as const;
 
-/** Elements that may carry a state bit other than `links_here` (which every link may). */
-export const STATEFUL = [
-  ...STATE_ATTRIBUTES.map((name) => `[${name}]`),
-  "input", "select", "textarea", "button", "fieldset", "option", "optgroup", "[popover]",
-].join(",");
+/**
+ * Elements that may have a state bit other than `links_here` right now: the
+ * attributes, plus native state by pseudo-class, so plain buttons and inputs
+ * are not visited. Pseudo-classes a browser lacks are dropped.
+ */
+const STATE_ATTRIBUTE_SELECTOR = STATE_ATTRIBUTES.map((name) => `[${name}]`).join(",");
+const STATE_PSEUDO = [":checked", ":disabled", ":user-invalid", ":popover-open"];
+let statefulSelector: string | null = null;
+export function stateful(): string {
+  if (statefulSelector) return statefulSelector;
+  const supported = STATE_PSEUDO.filter((pseudo) => {
+    try {
+      document.createElement("div").matches(pseudo);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return (statefulSelector = [STATE_ATTRIBUTE_SELECTOR, ...supported].join(","));
+}
 
 /** Tags whose state can come from properties or pseudo-classes rather than attributes. */
 const NATIVE = new Set(["INPUT", "SELECT", "TEXTAREA", "BUTTON", "FIELDSET", "OPTION", "OPTGROUP", "A"]);
@@ -82,11 +97,13 @@ export function stateBits(
   element: Element,
   here: { origin: string; path: string } | null,
   popoverOpen?: boolean,
+  /** Reads an attribute; given to work out bits from earlier attribute values. */
+  read?: (name: string) => string | null,
 ): number {
   const tag = element.tagName;
   // Most elements have no attributes and no native state: nothing to read.
-  if (!element.hasAttributes() && !NATIVE.has(tag)) return 0;
-  const attr = (name: string) => element.getAttribute(name);
+  if (!read && !element.hasAttributes() && !NATIVE.has(tag)) return 0;
+  const attr = read ?? ((name: string) => element.getAttribute(name));
   let bits = 0;
   if (attributeOn("aria-current", attr("aria-current"))) bits |= STATE.current;
   if (attributeOn("aria-selected", attr("aria-selected"))) bits |= STATE.selected;
@@ -104,7 +121,7 @@ export function stateBits(
     bits |= STATE.invalid;
   if (attributeOn("aria-busy", attr("aria-busy"))) bits |= STATE.busy;
   if (
-    ((tag === "DETAILS" || tag === "DIALOG") && element.hasAttribute("open")) ||
+    ((tag === "DETAILS" || tag === "DIALOG") && attr("open") !== null) ||
     (popoverOpen ?? (element.hasAttribute("popover") && safeMatches(element, ":popover-open")))
   )
     bits |= STATE.open;
@@ -157,13 +174,15 @@ export function linksHereIn(root: Element): { links: number; marked: number } {
   return { links, marked };
 }
 
-/** State bits (without `links_here`) of every stateful element under `root`, at most 10000. */
-export function stateMap(root: Element): Map<Element, number> {
-  const map = new Map<Element, number>();
-  const found = root.querySelectorAll(STATEFUL);
-  for (let i = 0; i < found.length && i < 10_000; i++) {
-    const bits = stateBits(found[i], null);
-    if (bits) map.set(found[i], bits);
+/** `node` and the elements under it that may have state, at most `limit`. */
+export function statefulIn(node: Element, limit: number): Element[] {
+  const out: Element[] = [];
+  try {
+    if (node.matches(stateful())) out.push(node);
+    const found = node.querySelectorAll(stateful());
+    for (let i = 0; i < found.length && out.length < limit; i++) out.push(found[i]);
+  } catch {
+    /* Unreadable: nothing. */
   }
-  return map;
+  return out;
 }
