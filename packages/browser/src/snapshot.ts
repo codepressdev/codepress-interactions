@@ -985,8 +985,9 @@ function truncateBody(body: SnapshotBody, keep: number): SnapshotBody {
     const { state: _dropped, ...rest } = legend;
     legend = rest;
   }
+  const { state: _state, ...rest } = body;
   return {
-    ...body,
+    ...rest,
     legend,
     element_count: keep,
     truncated: true,
@@ -1033,7 +1034,9 @@ function truncateBody(body: SnapshotBody, keep: number): SnapshotBody {
           },
         }
       : {}),
-    state: state && s ? { element: state.element.slice(0, s), bits: state.bits.slice(0, s), truncated: state.truncated } : undefined,
+    ...(state && s
+      ? { state: { element: state.element.slice(0, s), bits: state.bits.slice(0, s), truncated: state.truncated } }
+      : {}),
   };
 }
 

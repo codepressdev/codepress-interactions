@@ -5,7 +5,7 @@ import { STATE } from "../src/format";
 import { createMemorySink, initInteractions, type InteractionHandle } from "../src/index";
 import { PerfSignals } from "../src/perf";
 import { normalizePath } from "../src/state";
-import { walkSnapshot } from "../src/snapshot";
+import { encodeSnapshot, walkSnapshot } from "../src/snapshot";
 import type { ClickSettledData } from "../src/types";
 
 const walk = async () =>
@@ -93,6 +93,19 @@ describe("snapshot state table", () => {
     ]);
     expect(Object.keys(body.legend)).toEqual(["position", "flags", "hit_points"]);
     expect(JSON.stringify(body)).not.toContain('"state"');
+  });
+
+  it("maxSnapshotBytes drops state rows past the kept elements, and the legend entry with the last one", async () => {
+    document.body.innerHTML = `<button aria-pressed="true">A</button>` + Array.from({ length: 200 }, () => "<div></div>").join("") + `<button aria-pressed="true">B</button>`;
+    const body = await walk();
+    expect(body.state!.element.length).toBe(2);
+    const half = encodeSnapshot(structuredClone(body), Math.floor(JSON.stringify(body).length / 2));
+    expect(half.body.truncated).toBe(true);
+    expect(half.body.state!.element).toEqual([body.state!.element[0]]);
+    expect(half.body.legend.state).toEqual(STATE);
+    const none = encodeSnapshot(structuredClone(body), 10);
+    expect(Object.keys(none.body)).not.toContain("state");
+    expect(Object.keys(none.body.legend)).toEqual(["position", "flags", "hit_points"]);
   });
 
   it("caps the table and says so", async () => {
