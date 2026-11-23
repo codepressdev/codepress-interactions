@@ -24,6 +24,34 @@ export const FLAGS = {
   allow_overlap: 16384,
 } as const;
 
+/**
+ * Bit values of `state.bits` (1.5.0): what the UI claims about an element,
+ * read from ARIA and native state. Booleans only; attribute values are never
+ * recorded.
+ */
+export const STATE = {
+  /** aria-current present and not "false". */
+  current: 1,
+  /** aria-selected="true". */
+  selected: 2,
+  /** aria-expanded="true". */
+  expanded: 4,
+  /** aria-pressed="true". */
+  pressed: 8,
+  /** A checked checkbox or radio, or aria-checked="true". */
+  checked: 16,
+  /** A disabled form control (:disabled), or aria-disabled="true". */
+  disabled: 32,
+  /** aria-invalid present and not "false", or :user-invalid. */
+  invalid: 64,
+  /** aria-busy="true". */
+  busy: 128,
+  /** An open details or dialog, or an open popover. */
+  open: 256,
+  /** A same-origin link whose path is the page's path (trailing slash ignored). */
+  links_here: 512,
+} as const;
+
 /** Color scheme on screen. A bounded enum: anything else is recorded as "unknown". */
 export type Theme = "light" | "dark" | "unknown";
 export const THEMES: readonly Theme[] = ["light", "dark", "unknown"];
@@ -55,6 +83,8 @@ export interface SnapshotBody {
     position: readonly string[];
     flags: Readonly<Record<string, number>>;
     hit_points: readonly string[];
+    /** Bit values of `state.bits`; present only with a `state` table (1.5.0). */
+    state?: Readonly<Record<string, number>>;
   };
   dictionaries: { tag: string[]; role: string[]; test_id: string[] };
   elements: {
@@ -119,5 +149,16 @@ export interface SnapshotBody {
     has_title: boolean[];
     /** The control holds images or SVG and no text. */
     icon_only: boolean[];
+  };
+  /**
+   * Elements with any UI state set (1.5.0): row and bitmask (see
+   * `legend.state`). Only rows with a bit set are listed, at most
+   * `MAX_STATE_ROWS`; `truncated` is true when more had state. Absent when no
+   * recorded element has state, and before 1.5.0.
+   */
+  state?: {
+    element: number[];
+    bits: number[];
+    truncated: boolean;
   };
 }

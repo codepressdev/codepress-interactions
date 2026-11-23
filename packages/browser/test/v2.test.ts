@@ -8,6 +8,7 @@ import {
   createMemorySink,
   defaultRouteTemplate,
   initInteractions,
+  STATE,
   type InteractionHandle,
   type InteractionOptions,
 } from "../src/index";
@@ -135,7 +136,7 @@ describe("options", () => {
     const good = start({ release: "app@2.4.0+sha.1a2b" });
     good.handle.runAction("x", () => {});
     await good.handle.flush();
-    expect(good.sink.batches[0]).toMatchObject({ schema_version: 2, sdk_version: "1.4.0", release: "app@2.4.0+sha.1a2b" });
+    expect(good.sink.batches[0]).toMatchObject({ schema_version: 2, sdk_version: "1.5.0", release: "app@2.4.0+sha.1a2b" });
     good.handle.shutdown();
     const bad = start({ release: "has spaces and <html>" });
     bad.handle.runAction("x", () => {});
@@ -203,6 +204,34 @@ describe("contract", () => {
     const finding = structuredClone(batch);
     finding.events.find((e: any) => e.type === "ui.finding").data.evidence.verdict = "looks broken";
     expect(validateBatch(finding)).toBe(false);
+  });
+
+  it("1.5.0 state: the snapshot state table and the click state fields validate; bodies and clicks without them still do", () => {
+    const validateSnapshot = snapshotValidator();
+    const batch = JSON.parse(readFileSync(resolve(protocol, "v2-batch.json"), "utf8"));
+    const body = JSON.parse(readFileSync(resolve(protocol, "v2-snapshot.json"), "utf8"));
+    expect(body.state.element.length).toBeGreaterThan(0);
+    expect(body.legend.state).toEqual(STATE);
+    // A 1.4.0-shaped body: no table, no legend entry.
+    const { state: _s, ...older } = body;
+    const { state: _l, ...olderLegend } = body.legend;
+    expect(validateSnapshot({ ...older, legend: olderLegend }), JSON.stringify(validateSnapshot.errors)).toBe(true);
+    // Bits are numbers in range; values are fixed; nothing else rides along.
+    expect(validateSnapshot({ ...body, state: { ...body.state, bits: [1024] } })).toBe(false);
+    expect(validateSnapshot({ ...body, state: { ...body.state, bits: [0] } })).toBe(false);
+    expect(validateSnapshot({ ...body, state: { ...body.state, href: ["/x"] } })).toBe(false);
+    expect(validateSnapshot({ ...body, legend: { ...body.legend, state: { ...STATE, current: 2 } } })).toBe(false);
+    const click = batch.events.find((e: any) => e.type === "ui.click.settled");
+    const one = (event: any) => ({ ...batch, events: [event] });
+    for (const key of ["state_changes", "clicked_state_changed", "state_reverted", "marked_before", "marked_after", "links_here_after", "links_here_marked_after"])
+      expect(click.data, key).toHaveProperty(key);
+    const {
+      state_changes: _a, clicked_state_changed: _b, state_reverted: _c, marked_before: _d, marked_after: _e,
+      links_here_after: _f, links_here_marked_after: _g, ...before15
+    } = click.data;
+    expect(validateBatch(one({ ...click, data: before15 })), JSON.stringify(validateBatch.errors)).toBe(true);
+    expect(validateBatch(one({ ...click, data: { ...click.data, state_reverted: "yes" } }))).toBe(false);
+    expect(validateBatch(one({ ...click, data: { ...click.data, marked_after: -1 } }))).toBe(false);
   });
 
   it("ui.hover.settled, the hover and focus snapshot triggers and the silent counters validate; 1.1.0 summaries still do", () => {

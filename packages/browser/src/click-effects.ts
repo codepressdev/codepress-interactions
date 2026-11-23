@@ -7,6 +7,8 @@ import type { EffectContracts, EffectWatch } from "./effect-contract";
 import { DIALOGS, Follower, observeOptions, scanAdded, type FollowWindow } from "./follow";
 import type { PerfSignals, SignalCounters } from "./perf";
 import { INTERACTIVE } from "./snapshot";
+import { STATE } from "./format";
+import { attributeOn, GROUP, groupOf, linksHereIn, markedIn, STATE_ATTRIBUTES, stateBits, stateMap } from "./state";
 import type { ClickEndReason, ClickSettledData } from "./types";
 import { clampMs, now } from "./util";
 
@@ -61,7 +63,21 @@ interface ClickWindow extends FollowWindow {
   laterInput: boolean;
   /** The clicked control's effect contract, when it declares one. */
   effect: EffectWatch | null;
+  /** State bits of stateful elements when the click began (in the page only). */
+  stateBefore: Map<Element, number>;
+  /** The clicked control's (or target's) state bits when the click began. */
+  clickedBefore: number;
+  /** The control's nearest group, its position among groups, and its marked items when the click began. */
+  group: Element | null;
+  groupIndex: number;
+  markedBefore: number | null;
+  /** Per element and state attribute: on before the first change, and whether a later change saw it differ. */
+  attributeTrack: Map<Element, Map<string, { first: boolean; moved: boolean }>>;
 }
+
+/** Bits a click's state comparison looks at: everything but links_here, which moves with the route. */
+const CLAIMED = ~STATE.links_here;
+const STATE_ATTRIBUTE_SET = new Set<string>(STATE_ATTRIBUTES);
 
 const isDialog = (element: Element): boolean => element.matches(DIALOGS);
 
@@ -77,7 +93,8 @@ export class ClickEffects {
   constructor(private host: ClickHost) {
     this.follow = new Follower<ClickWindow, "page_hidden">({
       root: host.root,
-      observe: observeOptions(),
+      // State attributes with their old values, to see a change that reverted before settling.
+      observe: { ...observeOptions(["aria-current", "aria-invalid", "aria-disabled", "checked"]), attributeOldValue: true },
       settleMs: host.settleMs,
       timeoutMs: host.timeoutMs,
       records: (click, records) => {
@@ -94,6 +111,7 @@ export class ClickEffects {
             click.dialogOpened = true;
         }
         if (!click.dialogOpened && scanAdded(records, isDialog)) click.dialogOpened = true;
+        trackState(click, records);
         if (click.effect) this.host.effects?.records(click.effect, records);
         this.effect(click, true);
       },
@@ -217,11 +235,22 @@ export class ClickEffects {
         !sameSelection(this.pressSelection, selectionMark()),
       laterInput: false,
       effect: null,
+      stateBefore: new Map(),
+      clickedBefore: 0,
+      group: null,
+      groupIndex: -1,
+      markedBefore: null,
+      attributeTrack: new Map(),
     };
     try {
       describeTarget(click, event, this.host.root);
     } catch {
       /* Unknown target: reported as not interactive. */
+    }
+    try {
+      stateBegin(click, this.host.root);
+    } catch {
+      /* State that cannot be read is not compared. */
     }
     try {
       click.effect = this.host.effects?.begin(control, event?.target) ?? null;
@@ -330,6 +359,11 @@ export class ClickEffects {
       before_sha256: click.before,
       after_sha256: null,
     };
+    try {
+      Object.assign(data, stateEnd(click, this.host.root));
+    } catch {
+      /* State that cannot be read is left out. */
+    }
     if (click.effect) {
       try {
         this.host.effects?.finish(click.effect, data, reason, click.id);
@@ -357,6 +391,74 @@ export class ClickEffects {
       .catch(() => null)
       .then(report, flush);
   }
+}
+
+/** Records state attribute changes: the value before the first, and whether a later one saw it differ. */
+function trackState(click: ClickWindow, records: MutationRecord[]): void {
+  for (let i = 0; i < records.length && i < 256; i++) {
+    const record = records[i];
+    const name = record.attributeName;
+    if (record.type !== "attributes" || !name || !STATE_ATTRIBUTE_SET.has(name)) continue;
+    const target = record.target as Element;
+    let byName = click.attributeTrack.get(target);
+    if (!byName) {
+      if (click.attributeTrack.size >= 1000) continue;
+      click.attributeTrack.set(target, (byName = new Map()));
+    }
+    const on = attributeOn(name, record.oldValue);
+    const seen = byName.get(name);
+    if (!seen) byName.set(name, { first: on, moved: false });
+    // A later record's old value is the value an earlier change set.
+    else if (on !== seen.first) seen.moved = true;
+  }
+}
+
+/** Reads the state a click is compared against. */
+function stateBegin(click: ClickWindow, root: Element): void {
+  click.stateBefore = stateMap(root);
+  const clicked = click.target ?? click.control;
+  click.clickedBefore = stateBits(clicked, null) & CLAIMED;
+  const group = groupOf(clicked);
+  if (group && root.contains(group)) {
+    click.group = group;
+    click.groupIndex = Array.prototype.indexOf.call(root.querySelectorAll(GROUP), group);
+    click.markedBefore = markedIn(group);
+  }
+}
+
+/** State fields of ui.click.settled (1.5.0): counts and booleans only. */
+function stateEnd(click: ClickWindow, root: Element): Partial<ClickSettledData> {
+  const after = stateMap(root);
+  let changes = 0;
+  for (const [element, bits] of click.stateBefore)
+    if ((bits & CLAIMED) !== ((after.get(element) ?? 0) & CLAIMED)) changes++;
+  for (const [element, bits] of after)
+    if (!click.stateBefore.has(element) && bits & CLAIMED) changes++;
+  const clicked = click.target ?? click.control;
+  const clickedAfter = clicked.isConnected ? stateBits(clicked, null) & CLAIMED : 0;
+  // The clicked control's own property state (a checkbox's checked) is not in the attribute maps.
+  if (clickedAfter !== click.clickedBefore && !click.stateBefore.has(clicked) && !after.has(clicked)) changes++;
+  let reverted = false;
+  for (const [element, byName] of click.attributeTrack)
+    for (const [name, seen] of byName)
+      if (seen.moved && attributeOn(name, element.getAttribute(name)) === seen.first) reverted = true;
+  const out: Partial<ClickSettledData> = {
+    state_changes: Math.min(MAX_COUNT, changes),
+    clicked_state_changed: clickedAfter !== click.clickedBefore,
+    state_reverted: reverted,
+  };
+  if (click.markedBefore !== null) {
+    // A group replaced while the click was open is found again by its position among groups.
+    let group: Element | null = click.group;
+    if (!group?.isConnected || !root.contains(group))
+      group = click.groupIndex >= 0 ? root.querySelectorAll(GROUP)[click.groupIndex] ?? null : null;
+    out.marked_before = click.markedBefore;
+    if (group) out.marked_after = markedIn(group);
+  }
+  const links = linksHereIn(root);
+  out.links_here_after = links.links;
+  out.links_here_marked_after = links.marked;
+  return out;
 }
 
 const isField = (node: Node): node is Element => node instanceof Element && node.matches(FIELD);

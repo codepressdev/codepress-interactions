@@ -1010,6 +1010,44 @@
           "type": "boolean",
           "description": "The click changed the text selection or moved the caret (a selectionchange from its own press or while it was open), for example selecting a word with a double-click. rage_click counts it as an answer. Absent before 1.0.0."
         },
+        "state_changes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Added in 1.5.0. Stateful elements (see the snapshot legend.state bits, all but links_here) whose state differs between the click and the end of its window, counting elements that appeared or went away with state set, and the clicked control's own checked or other state. Absent before 1.5.0."
+        },
+        "clicked_state_changed": {
+          "type": "boolean",
+          "description": "Added in 1.5.0. The clicked control's (or the control it landed in) own state bits changed: it became checked, pressed, expanded, current, selected, disabled and so on, or the reverse. Absent before 1.5.0."
+        },
+        "state_reverted": {
+          "type": "boolean",
+          "description": "Added in 1.5.0. A state attribute (aria-current, aria-selected, aria-expanded, aria-pressed, aria-checked, aria-disabled, aria-invalid, aria-busy, open, disabled or checked) changed while the click was open and was back where it started when the window ended, for example a tab selected and then unselected again. Absent before 1.5.0."
+        },
+        "marked_before": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Added in 1.5.0. Elements marked current (aria-current present and not false) or selected (aria-selected=true) inside the clicked control's nearest nav, navigation, tablist, menu, menubar, listbox or radiogroup, else its nearest landmark, when the click began. Absent when the control is in none."
+        },
+        "marked_after": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Added in 1.5.0. The same count when the window ended; a group replaced meanwhile is found again by its position among groups. Absent when marked_before is, or when the group is gone."
+        },
+        "links_here_after": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Added in 1.5.0. Same-origin links (a[href]) whose path, trailing slash dropped except for /, equals the page's path when the window ended. The paths themselves are never recorded. Absent before 1.5.0."
+        },
+        "links_here_marked_after": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Added in 1.5.0. Of links_here_after, the links that are, or whose parent element is, current or selected. A link here with nothing marked is a page that does not show where the user is. Absent before 1.5.0."
+        },
         "overlapped": {
           "type": "boolean",
           "description": "Another click started before this one settled (on both clicks). Counts are never shared between them."

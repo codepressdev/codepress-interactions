@@ -101,6 +101,13 @@ const ClickData = {
     field_focused: { type: "boolean", description: "The click put focus in a text field, select or editable region; the caret or picker is its effect. Absent before 0.3.0." },
     new_context: { type: "boolean", description: "The click opened a new tab or window (link target, modifier key, download or window.open). Absent before 0.3.0." },
     selection_changed: { type: "boolean", description: "The click changed the text selection or moved the caret (a selectionchange from its own press or while it was open), for example selecting a word with a double-click. rage_click counts it as an answer. Absent before 1.0.0." },
+    state_changes: { ...count, description: "Added in 1.5.0. Stateful elements (see the snapshot legend.state bits, all but links_here) whose state differs between the click and the end of its window, counting elements that appeared or went away with state set, and the clicked control's own checked or other state. Absent before 1.5.0." },
+    clicked_state_changed: { type: "boolean", description: "Added in 1.5.0. The clicked control's (or the control it landed in) own state bits changed: it became checked, pressed, expanded, current, selected, disabled and so on, or the reverse. Absent before 1.5.0." },
+    state_reverted: { type: "boolean", description: "Added in 1.5.0. A state attribute (aria-current, aria-selected, aria-expanded, aria-pressed, aria-checked, aria-disabled, aria-invalid, aria-busy, open, disabled or checked) changed while the click was open and was back where it started when the window ended, for example a tab selected and then unselected again. Absent before 1.5.0." },
+    marked_before: { ...count, description: "Added in 1.5.0. Elements marked current (aria-current present and not false) or selected (aria-selected=true) inside the clicked control's nearest nav, navigation, tablist, menu, menubar, listbox or radiogroup, else its nearest landmark, when the click began. Absent when the control is in none." },
+    marked_after: { ...count, description: "Added in 1.5.0. The same count when the window ended; a group replaced meanwhile is found again by its position among groups. Absent when marked_before is, or when the group is gone." },
+    links_here_after: { ...count, description: "Added in 1.5.0. Same-origin links (a[href]) whose path, trailing slash dropped except for /, equals the page's path when the window ended. The paths themselves are never recorded. Absent before 1.5.0." },
+    links_here_marked_after: { ...count, description: "Added in 1.5.0. Of links_here_after, the links that are, or whose parent element is, current or selected. A link here with nothing marked is a page that does not show where the user is. Absent before 1.5.0." },
     overlapped: { type: "boolean", description: "Another click started before this one settled (on both clicks). Counts are never shared between them." },
     incomplete: { type: "boolean", description: "The window ended by timeout or by the page being hidden/unloaded." },
     end_reason: { type: "string", enum: ["settled", "overlapped", "timeout", "page_hidden"] },
@@ -269,6 +276,7 @@ const size = num(0, 1e7);
 const idx = int(-1, 49999);
 const FLAGS = { visible: 1, interactive: 2, clipped: 4, scrollable: 8, overlay: 16, ignored: 32, pointer_events_none: 64, opaque: 128, clips_content: 256, in_shadow: 512, popover_open: 1024, ellipsis: 2048, broken_image: 4096, aria_hidden: 8192, allow_overlap: 16384 };
 /** Flags 0.2.0 bodies do not list in their legend. */
+const STATE = { current: 1, selected: 2, expanded: 4, pressed: 8, checked: 16, disabled: 32, invalid: 64, busy: 128, open: 256, links_here: 512 };
 const LATER_FLAGS = ["popover_open", "ellipsis", "broken_image", "aria_hidden", "allow_overlap"];
 const snapshot = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -308,7 +316,11 @@ const snapshot = {
           items: false,
           minItems: 5,
         },
-      }),
+        state: {
+          ...strict(Object.fromEntries(Object.entries(STATE).map(([k, v]) => [k, { const: v }]))),
+          description: "Added in 1.5.0. Bit values of state.bits; present only with a state table.",
+        },
+      }, ["position", "flags", "hit_points"]),
       description: "Fixed decoding tables, repeated in every body so a body is self-describing.",
     },
     dictionaries: strict({
@@ -374,6 +386,14 @@ const snapshot = {
         icon_only: col({ type: "boolean" }, "The control holds an svg, img or picture and no text, or is an image input."),
       }),
       description: "Visible, enabled interactive elements with a role, not aria-hidden, whose accessible name is empty: no aria-labelledby target with text, aria-label, associated label with text, alt (image inputs), title, placeholder, own text (for roles named from content: button, link, checkbox, radio, switch, tab, menu items, option, treeitem) or value (button-type inputs; submit and reset without a value have a default name). Worked out in the page; only these booleans are recorded. Absent before 1.2.0.",
+    },
+    state: {
+      ...strict({
+        element: col(int(0, 49999), "Row of an element with at least one state bit set, ascending."),
+        bits: col(int(1, 1023), "Bitmask, see legend.state. current: aria-current present and not false. selected: aria-selected=true. expanded: aria-expanded=true. pressed: aria-pressed=true. checked: a checked checkbox or radio, or aria-checked=true. disabled: a disabled form control (:disabled, including inside a disabled fieldset) or aria-disabled=true. invalid: aria-invalid present and not false, or :user-invalid. busy: aria-busy=true. open: an open details or dialog, or an open popover. links_here: a same-origin a[href] whose path, trailing slash dropped except for /, equals the page's path."),
+        truncated: { type: "boolean", description: "More than 10000 recorded elements had state; the rest are not listed." },
+      }),
+      description: "Added in 1.5.0. What the UI claims about each element, as bits read from ARIA and native state in the page; attribute values, hrefs and paths are never recorded. Elements matching the ignore selector are not listed. Absent when no recorded element has state.",
     },
   }, [
     "schema_version", "route_template", "viewport", "document", "element_count", "truncated", "torn",

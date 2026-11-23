@@ -24,6 +24,7 @@ test("regenerate golden fixtures", async ({ page }) => {
      <main style="padding:16px">
        <h1>Checkout</h1>
        <p style="width:240px">Your order ships in two to three business days.</p>
+       <nav data-testid="steps"><a data-testid="step-checkout" href="/checkout/8f14e45f/" aria-current="step">Checkout</a></nav>
        <button data-testid="checkout-save" id="save">Save</button>
        <div style="position:relative;width:32px;height:32px;margin-top:16px">
          <div data-testid="cart-icon" style="width:32px;height:32px;background:#ccc"></div>

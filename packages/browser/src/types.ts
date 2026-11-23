@@ -228,6 +228,20 @@ export interface ClickSettledData {
   new_context?: boolean;
   /** The click changed the text selection or moved the caret (1.0.0). */
   selection_changed?: boolean;
+  /** Stateful elements whose state bits (all but links_here) differ between the click and its end (1.5.0). */
+  state_changes?: number;
+  /** The clicked control's own state bits changed (1.5.0). */
+  clicked_state_changed?: boolean;
+  /** A state attribute changed and changed back before the click ended (1.5.0). */
+  state_reverted?: boolean;
+  /** Elements marked current or selected in the control's nearest group when the click began (1.5.0); absent outside a group. */
+  marked_before?: number;
+  /** The same count at the click's end (1.5.0); absent outside a group, or when the group is gone. */
+  marked_after?: number;
+  /** Same-origin links pointing at the page's path at the click's end (1.5.0). */
+  links_here_after?: number;
+  /** Of those, links that are (or whose parent is) current or selected (1.5.0). */
+  links_here_marked_after?: number;
   overlapped: boolean;
   incomplete: boolean;
   end_reason: ClickEndReason;

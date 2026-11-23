@@ -469,3 +469,42 @@ test("effect contracts: item keys, target test IDs, states, field IDs and values
   expect(hashes.length).toBeGreaterThanOrEqual(6);
   for (const digest of hashes) expect(sent, digest).not.toContain(digest);
 });
+
+// UI state (1.5.0): ARIA values and hrefs are read in the page to work out state bits; only the bits may leave it.
+test("state attribute values and the hrefs compared for links_here reach no batch or snapshot", async ({ page }) => {
+  await openPage(
+    page,
+    `<nav aria-label="${S} nav">
+       <a data-testid="here" href="/${S}/" aria-current="${S}">${S} here</a>
+       <a id="other" href="/other-${S}?q=${S}#${S}" aria-current="false">${S} other</a>
+     </nav>
+     <div role="tablist"><button role="tab" aria-selected="true" aria-controls="${S}-panel">${S}</button></div>
+     <button aria-expanded="true" aria-controls="${S}-region">${S}</button>
+     <input type="checkbox" checked name="${S}" value="${S}">
+     <input aria-invalid="${S}" aria-errormessage="${S}-error">
+     <details open title="${S}"><summary>${S}</summary>${S}</details>
+     <script>
+       const other = document.getElementById("other");
+       other.addEventListener("click", (event) => {
+         event.preventDefault();
+         history.pushState({}, "", other.getAttribute("href"));
+         other.setAttribute("aria-current", "${S}-now");
+         document.querySelector('[data-testid="here"]').removeAttribute("aria-current");
+       });
+     </script>`,
+    {},
+    `/${S}`,
+  );
+  await init(page, { clickSettleMs: 100 });
+  await page.evaluate(() => (window as any).handle.snapshot());
+  await page.click("#other");
+  await expect.poll(async () => events(await output(page)).some((e) => e.type === "ui.click.settled")).toBe(true);
+  const out = await output(page);
+  expectValid(out);
+  const click = events(out).find((e) => e.type === "ui.click.settled").data;
+  expect(click).toMatchObject({ links_here_after: 1, links_here_marked_after: 1, marked_before: 1, marked_after: 1 });
+  expect(out.snapshots.every((s) => s.body.state)).toBe(true);
+  const everything = [...out.serialized, ...out.snapshots.map((s) => s.serialized)].join("\n");
+  expect(everything.toLowerCase()).not.toContain(S.toLowerCase());
+  expect(everything).not.toContain("other-");
+});
