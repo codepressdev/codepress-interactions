@@ -1014,7 +1014,7 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1000000,
-          "description": "Added in 1.5.0. Stateful elements (see the snapshot legend.state bits, all but links_here) whose state differs between the click and the end of its window, counting elements that appeared or went away with state set, and the clicked control's own checked or other state. Absent before 1.5.0."
+          "description": "Added in 1.5.0. Elements whose state (see the snapshot legend.state bits, all but links_here) differs between the click and the end of its window: elements whose state attributes changed, elements added or removed with state set, and the clicked control itself (including a checkbox's checked). Worked out from the window's DOM changes, not by scanning the page; property-only state of other elements (a field disabled through its fieldset) is not compared. At most about 4000 elements are compared. Absent before 1.5.0."
         },
         "clicked_state_changed": {
           "type": "boolean",
